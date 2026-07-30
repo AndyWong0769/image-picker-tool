@@ -1,0 +1,44 @@
+name: Build macOS DMG (Trial - 免激活版)
+
+on:
+  push:
+    tags:
+      - 'trial*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-13  # Intel runner
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install py2app pillow
+
+      - name: Build macOS app (Trial - 免激活)
+        env:
+          SKIP_LICENSE: "1"  # 跳过授权检查
+        run: |
+          python setup.py py2app
+
+      - name: Create DMG
+        run: |
+          cd dist
+          hdiutil create -volname "图片编号挑选工具-试用版" -srcfolder "图片编号挑选工具.app" -ov -format UDZO ../图片编号挑选工具-试用版.dmg
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 图片编号挑选工具-试用版-macos
+          path: 图片编号挑选工具-试用版.dmg
+          retention-days: 30

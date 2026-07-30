@@ -857,7 +857,8 @@ class ImagePickerApp:
             self.root.bind('<Command-r>', lambda e: self._refresh_extract())
 
         # macOS 授权检查（启动后延迟弹出，避免影响加载）
-        if IS_MACOS:
+        # 环境变量 SKIP_LICENSE=1 可跳过授权（用于试用版构建）
+        if IS_MACOS and os.environ.get('SKIP_LICENSE') != '1':
             self.root.after(500, self._check_license_on_startup)
 
     def _setup_styles(self):
