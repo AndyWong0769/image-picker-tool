@@ -206,10 +206,49 @@ def get_activation_file_path():
     return os.path.join(get_app_config_dir(), '.activated')
 
 
+def get_trial_file_path():
+    """获取试用期记录文件路径"""
+    return os.path.join(get_app_config_dir(), '.trial')
+
+
+def check_trial():
+    """检查试用期状态，返回 (是否可用, 剩余天数, 消息)"""
+    trial_file = get_trial_file_path()
+
+    if not os.path.exists(trial_file):
+        # 首次启动，记录开始时间
+        now = datetime.now().isoformat()
+        try:
+            with open(trial_file, 'w', encoding='utf-8') as f:
+                json.dump({'start': now}, f)
+        except Exception:
+            pass
+        return True, 5, "试用期第 1 天，共 5 天"
+
+    try:
+        with open(trial_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        start_str = data.get('start', '')
+        start = datetime.fromisoformat(start_str)
+        elapsed = (datetime.now() - start).days
+        remaining = 5 - elapsed
+
+        if remaining > 0:
+            return True, remaining, f"试用期剩余 {remaining} 天"
+        else:
+            return False, 0, "试用期已结束，请购买激活"
+    except Exception:
+        return True, 5, "试用期第 1 天，共 5 天"
+
+
 def check_license():
     """检查本机授权状态"""
     if not IS_MACOS:
         return True, "Windows 版无需激活"
+
+    # 如果跳过授权（试用版构建）
+    if os.environ.get('SKIP_LICENSE') == '1':
+        return check_trial()
 
     serial = get_mac_serial()
     act_file = get_activation_file_path()
@@ -1983,6 +2022,19 @@ class ImagePickerApp:
         """显示授权对话框"""
         LicenseDialog(self.root)
 
+    def _add_trial_banner(self):
+        """在界面顶部添加试用期提示条"""
+        if os.environ.get('SKIP_LICENSE') != '1':
+            return
+        ok, remaining, msg = check_trial()
+        if not ok:
+            return  # 试用期结束会弹对话框
+        if remaining <= 5:
+            banner = tk.Frame(self.root, bg="#f0c674", padx=8, pady=4)
+            banner.pack(fill=tk.X, side=tk.TOP, before=self.root.winfo_children()[0] if self.root.winfo_children() else None)
+            tk.Label(banner, text=f"⏳ {msg}，购买后可永久使用", bg="#f0c674", fg="#1e1e2e",
+                     font=(self.sys_font, 9, "bold")).pack()
+
 
 class LicenseDialog:
     """授权激活对话框"""
@@ -2019,11 +2071,17 @@ class LicenseDialog:
         main = tk.Frame(self.top, bg=bg, padx=24, pady=20)
         main.pack(fill=tk.BOTH, expand=True)
 
-        # 标题
-        tk.Label(main, text="🔒 软件未激活", bg=bg, fg=accent,
-                 font=(sys_font, 16, "bold")).pack(anchor="w")
-        tk.Label(main, text="请购买授权后输入激活码使用", bg=bg, fg=ash,
-                 font=(sys_font, 10)).pack(anchor="w", pady=(0, 16))
+        # 标题 - 根据是否试用版显示不同文案
+        if os.environ.get('SKIP_LICENSE') == '1':
+            tk.Label(main, text="⏳ 试用期已结束", bg=bg, fg=accent,
+                     font=(sys_font, 16, "bold")).pack(anchor="w")
+            tk.Label(main, text="请购买激活码永久使用", bg=bg, fg=ash,
+                     font=(sys_font, 10)).pack(anchor="w", pady=(0, 16))
+        else:
+            tk.Label(main, text="🔒 软件未激活", bg=bg, fg=accent,
+                     font=(sys_font, 16, "bold")).pack(anchor="w")
+            tk.Label(main, text="请购买授权后输入激活码使用", bg=bg, fg=ash,
+                     font=(sys_font, 10)).pack(anchor="w", pady=(0, 16))
 
         # 序列号区域
         serial_frame = tk.Frame(main, bg=surface, padx=12, pady=10)
