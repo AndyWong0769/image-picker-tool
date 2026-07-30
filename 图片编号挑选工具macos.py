@@ -26,7 +26,11 @@ macOS 适配：
 import os
 import re
 import sys
+import json
 import shutil
+import hmac
+import base64
+import hashlib
 import threading
 import subprocess
 import tkinter as tk
@@ -122,10 +126,123 @@ def get_modifier_key():
 def is_modifier_pressed(event):
     """检测是否按下了修饰键（macOS: Command, Windows: Ctrl）"""
     if IS_MACOS:
-        # macOS Command key = Mod1/Meta
-        return bool(event.state & 0x0008)  # Mod1Mask (Command on macOS)
+        return bool(event.state & 0x0008)
     else:
-        return bool(event.state & 0x0004)  # ControlMask
+        return bool(event.state & 0x0004)
+
+
+# ============================================================
+# 授权系统（序列号 + 激活码）
+# ============================================================
+
+# 你的签名密钥 - 请修改成你自己的随机字符串（至少16位，妥善保管）
+# 警告：生成后不要再修改，否则以前生成的激活码会全部失效！
+LICENSE_SECRET_KEY = "PYTNV5CCECTGGH5KC73ZUWCKEKK83VXR"
+
+
+def get_mac_serial():
+    """获取 Mac 序列号"""
+    if not IS_MACOS:
+        return "WINDOWS-PC"
+
+    try:
+        result = subprocess.run(
+            ['system_profiler', 'SPHardwareDataType'],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.split('\n'):
+            if 'Serial Number' in line:
+                serial = line.split(':')[-1].strip()
+                if serial:
+                    return serial
+    except Exception:
+        pass
+
+    # 备选：用 ioreg
+    try:
+        result = subprocess.run(
+            ['ioreg', '-l'], capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.split('\n'):
+            if 'IOPlatformSerialNumber' in line:
+                parts = line.split('"')
+                for i, p in enumerate(parts):
+                    if 'IOPlatformSerialNumber' in p and i + 2 < len(parts):
+                        return parts[i + 2]
+    except Exception:
+        pass
+
+    return "UNKNOWN"
+
+
+def generate_activation_code(serial):
+    """根据序列号生成激活码（给卖家用的工具函数）"""
+    msg = serial.encode('utf-8')
+    sig = hmac.new(LICENSE_SECRET_KEY.encode('utf-8'), msg, hashlib.sha256).digest()
+    # 转 base32 去掉易混淆字符，格式 XXXXX-XXXXX-XXXXX
+    encoded = base64.b32encode(sig).decode('utf-8')
+    # 去掉易混淆的 0/O/I/L/1/8/B，只保留安全字符
+    safe = encoded.translate(str.maketrans('0OIL18B', 'XXXXXXX'))[:15]
+    # 如果不够15位，用安全字符补齐
+    safe_chars = 'ACDEFGHJKMNPQRTUVWXY2345679'
+    while len(safe) < 15:
+        idx = len(safe) % len(safe_chars)
+        safe += safe_chars[idx]
+    # 格式: XXXXX-XXXXX-XXXXX
+    return f"{safe[:5]}-{safe[5:10]}-{safe[10:15]}"
+
+
+def verify_activation_code(code, serial):
+    """验证激活码是否匹配序列号"""
+    expected = generate_activation_code(serial)
+    # 标准化输入
+    code_clean = code.strip().upper().replace(' ', '').replace('-', '')
+    expected_clean = expected.replace('-', '')
+    return code_clean == expected_clean
+
+
+def get_activation_file_path():
+    """获取激活状态文件路径"""
+    return os.path.join(get_app_config_dir(), '.activated')
+
+
+def check_license():
+    """检查本机授权状态"""
+    if not IS_MACOS:
+        return True, "Windows 版无需激活"
+
+    serial = get_mac_serial()
+    act_file = get_activation_file_path()
+
+    if not os.path.exists(act_file):
+        return False, "未激活"
+
+    try:
+        with open(act_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        saved_code = data.get('code', '')
+        saved_serial = data.get('serial', '')
+
+        # 序列号匹配 + 激活码验证
+        if saved_serial == serial and verify_activation_code(saved_code, serial):
+            return True, "已激活"
+        else:
+            return False, "授权无效"
+    except Exception:
+        return False, "授权数据损坏"
+
+
+def save_activation(code):
+    """保存激活状态"""
+    serial = get_mac_serial()
+    act_file = get_activation_file_path()
+    data = {
+        'code': code.strip().upper(),
+        'serial': serial,
+        'activated_at': datetime.now().isoformat()
+    }
+    with open(act_file, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
 
 
 # ============================================================
@@ -738,6 +855,10 @@ class ImagePickerApp:
         # macOS 上 F5 可能需要 fn 键，额外绑定 ⌘R
         if IS_MACOS:
             self.root.bind('<Command-r>', lambda e: self._refresh_extract())
+
+        # macOS 授权检查（启动后延迟弹出，避免影响加载）
+        if IS_MACOS:
+            self.root.after(500, self._check_license_on_startup)
 
     def _setup_styles(self):
         s = ttk.Style()
@@ -1849,6 +1970,135 @@ class ImagePickerApp:
             self.root.after(300, self._scan_source)
         if pick and os.path.isdir(pick):
             self.root.after(400, self._extract_from_dir())
+
+    # ── 授权系统 ──
+    def _check_license_on_startup(self):
+        """启动时检查授权，未激活则弹出对话框"""
+        ok, msg = check_license()
+        if not ok:
+            self._show_license_dialog()
+
+    def _show_license_dialog(self):
+        """显示授权对话框"""
+        LicenseDialog(self.root)
+
+
+class LicenseDialog:
+    """授权激活对话框"""
+
+    def __init__(self, parent):
+        self.top = tk.Toplevel(parent)
+        self.top.title("软件激活")
+        self.top.geometry("480x380")
+        self.top.resizable(False, False)
+        self.top.configure(bg=ImagePickerApp.BG)
+        self.top.transient(parent)
+        self.top.grab_set()
+
+        # 居中显示
+        self.top.update_idletasks()
+        x = (self.top.winfo_screenwidth() - 480) // 2
+        y = (self.top.winfo_screenheight() - 380) // 2
+        self.top.geometry(f"+{x}+{y}")
+
+        self._build_ui()
+        self.top.protocol('WM_DELETE_WINDOW', lambda: None)  # 禁止关闭
+
+    def _build_ui(self):
+        bg = ImagePickerApp.BG
+        surface = ImagePickerApp.SURFACE
+        ink = ImagePickerApp.INK
+        ash = ImagePickerApp.ASH
+        accent = ImagePickerApp.ACCENT
+        success = ImagePickerApp.SUCCESS
+        error = ImagePickerApp.ERROR
+        sys_font = get_system_font()
+        mono_font = get_monospace_font()
+
+        main = tk.Frame(self.top, bg=bg, padx=24, pady=20)
+        main.pack(fill=tk.BOTH, expand=True)
+
+        # 标题
+        tk.Label(main, text="🔒 软件未激活", bg=bg, fg=accent,
+                 font=(sys_font, 16, "bold")).pack(anchor="w")
+        tk.Label(main, text="请购买授权后输入激活码使用", bg=bg, fg=ash,
+                 font=(sys_font, 10)).pack(anchor="w", pady=(0, 16))
+
+        # 序列号区域
+        serial_frame = tk.Frame(main, bg=surface, padx=12, pady=10)
+        serial_frame.pack(fill=tk.X, pady=(0, 12))
+
+        tk.Label(serial_frame, text="您的机器码（发给卖家）:", bg=surface, fg=ash,
+                 font=(sys_font, 9)).pack(anchor="w")
+
+        serial_row = tk.Frame(serial_frame, bg=surface)
+        serial_row.pack(fill=tk.X, pady=(4, 0))
+
+        serial = get_mac_serial()
+        serial_entry = tk.Entry(serial_row, font=(mono_font, 11), bg=ImagePickerApp.BG,
+                                fg=ink, insertbackground=ink, relief="flat",
+                                highlightthickness=1, highlightbackground=ImagePickerApp.BORDER)
+        serial_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
+        serial_entry.insert(0, serial)
+        serial_entry.config(state="readonly")
+
+        # 复制按钮
+        def copy_serial():
+            self.top.clipboard_clear()
+            self.top.clipboard_append(serial)
+            copy_btn.config(text="✓ 已复制")
+            self.top.after(1500, lambda: copy_btn.config(text="复制"))
+
+        copy_btn = tk.Button(serial_row, text="复制", command=copy_serial,
+                             bg=accent, fg="#ffffff", relief="flat", padx=12,
+                             font=(sys_font, 9))
+        copy_btn.pack(side=tk.RIGHT, padx=(8, 0))
+
+        # 激活码输入
+        tk.Label(main, text="输入激活码:", bg=bg, fg=ash,
+                 font=(sys_font, 9)).pack(anchor="w")
+
+        self.code_var = tk.StringVar()
+        code_entry = tk.Entry(main, textvariable=self.code_var, font=(mono_font, 14),
+                              bg=ImagePickerApp.BG, fg=accent, insertbackground=accent,
+                              relief="flat", highlightthickness=1,
+                              highlightbackground=ImagePickerApp.BORDER,
+                              justify="center")
+        code_entry.pack(fill=tk.X, ipady=8, pady=(4, 12))
+        code_entry.focus_set()
+        code_entry.bind('<Return>', lambda e: self._activate())
+
+        # 状态提示
+        self.status_label = tk.Label(main, text="", bg=bg, fg=error,
+                                     font=(sys_font, 9), wraplength=430)
+        self.status_label.pack(fill=tk.X, pady=(0, 8))
+
+        # 激活按钮
+        self.act_btn = tk.Button(main, text="激 活", command=self._activate,
+                                 bg=accent, fg="#ffffff", relief="flat",
+                                 font=(sys_font, 12, "bold"), padx=20, pady=8)
+        self.act_btn.pack(fill=tk.X, ipady=4)
+
+        # 提示文字
+        tk.Label(main, text="将机器码发给卖家付款后，会收到激活码",
+                 bg=bg, fg=ash, font=(sys_font, 8)).pack(pady=(10, 0))
+
+    def _activate(self):
+        """执行激活"""
+        code = self.code_var.get().strip()
+        if not code:
+            self.status_label.config(text="请输入激活码", fg=ImagePickerApp.ERROR)
+            return
+
+        serial = get_mac_serial()
+
+        if verify_activation_code(code, serial):
+            save_activation(code)
+            self.status_label.config(text="✓ 激活成功！感谢购买！", fg=ImagePickerApp.SUCCESS)
+            self.top.after(1000, self.top.destroy)
+        else:
+            self.status_label.config(text="✗ 激活码无效，请检查后重试",
+                                     fg=ImagePickerApp.ERROR)
 
 
 # ============================================================
