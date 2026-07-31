@@ -8,8 +8,8 @@ on:
 
 jobs:
   build:
-    # 使用 Intel  runner 以兼容更多虚拟机
-    runs-on: macos-13  # macOS 13 是 Intel  runner
+    # 使用 Intel runner 以兼容更多虚拟机 (macos-13 已退役)
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout code
