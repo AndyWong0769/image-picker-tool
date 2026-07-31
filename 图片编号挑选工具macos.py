@@ -782,9 +782,9 @@ class ImagePickerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("图片编号挑选工具")
-        self.root.geometry("970x820")
-        self.root.minsize(970, 600)
-        self.root.resizable(False, True)  # 宽度固定，高度可调
+        self.root.geometry("1000x820")
+        self.root.minsize(800, 500)  # 最小宽度 800，防止内容挤压
+        self.root.resizable(True, True)  # 宽度高度均可自由调整
         self.root.configure(bg=self.BG)
 
         # macOS 启用 Retina 支持（Tk 8.6+ 自动处理）
