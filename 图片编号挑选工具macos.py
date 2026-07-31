@@ -51,6 +51,10 @@ IS_WINDOWS = sys.platform == 'win32'
 # 试用版跳过授权验证，改用 5 天试用期逻辑
 IS_TRIAL_BUILD = False
 
+# 免费版构建标记 — CI 构建免费版时会 sed 替换为 True
+# 免费版永久免激活，无时间限制
+IS_FREE_BUILD = False
+
 
 # ============================================================
 # macOS 专用工具函数
@@ -250,7 +254,11 @@ def check_license():
     if not IS_MACOS:
         return True, "Windows 版无需激活"
 
-    # 如果跳过授权（试用版构建）
+    # 免费版：永久免激活，无时间限制
+    if IS_FREE_BUILD:
+        return True, "免费版"
+
+    # 试用版：5 天限时
     if IS_TRIAL_BUILD:
         return check_trial()
 

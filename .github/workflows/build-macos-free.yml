@@ -1,0 +1,50 @@
+name: Build macOS DMG (Free - 永久免费版)
+
+on:
+  push:
+    tags:
+      - 'free*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15  # Apple Silicon (macos-13 Intel 已于2025年12月退役)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python (x86_64 for Rosetta cross-compile)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'  # x86_64 Python，兼容所有 Mac + 虚拟机
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          arch -x86_64 pip install py2app pillow
+
+      - name: Set free mode in source
+        run: |
+          sed -i '' 's/^IS_FREE_BUILD = False/IS_FREE_BUILD = True/' 图片编号挑选工具macos.py
+          grep "IS_FREE_BUILD" 图片编号挑选工具macos.py  # 确认修改成功
+
+      - name: Build macOS app (Free - 永久免费)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'  # 最低支持 macOS 11 Big Sur
+        run: |
+          arch -x86_64 python setup.py py2app
+
+      - name: Create DMG
+        run: |
+          cd dist
+          hdiutil create -volname "图片编号挑选工具-免费版" -srcfolder "图片编号挑选工具.app" -ov -format UDZO ../图片编号挑选工具-免费版.dmg
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 图片编号挑选工具-免费版-macos
+          path: 图片编号挑选工具-免费版.dmg
+          retention-days: 30
