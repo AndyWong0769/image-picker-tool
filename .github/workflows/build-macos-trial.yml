@@ -14,10 +14,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python (x86_64 for Rosetta cross-compile)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          architecture: 'x64'  # x86_64 Python，兼容所有 Mac + 虚拟机
 
       - name: Install dependencies
         run: |

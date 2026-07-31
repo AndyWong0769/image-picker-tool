@@ -20,8 +20,9 @@ OPTIONS = {
     'argv_emulation': False,  # macOS 上不需要
     'iconfile': 'logo.icns',  # macOS 应用图标
 
-    # universal2 = 同时兼容 Intel Mac 和 Apple Silicon Mac
-    'arch': 'universal2',
+    # x86_64 Intel 架构 — Intel Mac 原生运行，ARM Mac 通过 Rosetta 2 运行
+    # GitHub Actions 免费版只有 ARM runner，通过 Rosetta 2 交叉编译 x86_64
+    'arch': 'x86_64',
 
     'plist': {
         # 应用基本信息
