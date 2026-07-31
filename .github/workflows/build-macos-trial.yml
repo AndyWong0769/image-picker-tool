@@ -27,6 +27,7 @@ jobs:
       - name: Build macOS app (Trial - 免激活)
         env:
           SKIP_LICENSE: "1"  # 跳过授权检查
+          MACOSX_DEPLOYMENT_TARGET: '11.0'  # 最低支持 macOS 11 Big Sur
         run: |
           python setup.py py2app
 

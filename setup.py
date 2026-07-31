@@ -20,9 +20,8 @@ OPTIONS = {
     'argv_emulation': False,  # macOS 上不需要
     'iconfile': 'logo.icns',  # macOS 应用图标
 
-    # 架构设置：x86_64 兼容 Intel Mac，arm64 兼容 Apple Silicon
-    # GitHub Actions macos-latest 现在是 ARM，需要指定架构
-    'arch': 'x86_64',  # 构建 Intel 兼容版本，大多数虚拟机用这个
+    # universal2 = 同时兼容 Intel Mac 和 Apple Silicon Mac
+    'arch': 'universal2',
 
     'plist': {
         # 应用基本信息
@@ -38,6 +37,9 @@ OPTIONS = {
 
         # macOS 显示名称
         'CFBundleGetInfoString': '图片编号挑选工具 v4.0',
+
+        # 最低支持 macOS 11 Big Sur（兼容所有主流 Mac）
+        'LSMinimumSystemVersion': '11.0',
 
         # 高分辨率支持
         'NSHighResolutionCapable': True,

@@ -6,6 +6,10 @@ on:
       - 'v*'  # 推送 v* 标签时触发
   workflow_dispatch:  # 也支持手动触发
 
+# 给 GITHUB_TOKEN 写权限，允许 Create Release
+permissions:
+  contents: write
+
 jobs:
   build:
     # Apple Silicon runner (macos-13 Intel 已于2025年12月退役)
@@ -25,7 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install py2app pillow
 
-      - name: Build macOS app
+      - name: Build macOS app (Universal Binary, min macOS 11 Big Sur)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
           python setup.py py2app
 
