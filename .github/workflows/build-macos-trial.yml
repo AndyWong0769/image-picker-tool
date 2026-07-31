@@ -25,9 +25,13 @@ jobs:
           python -m pip install --upgrade pip
           arch -x86_64 pip install py2app pillow
 
+      - name: Set trial mode in source
+        run: |
+          sed -i '' 's/^IS_TRIAL_BUILD = False/IS_TRIAL_BUILD = True/' 图片编号挑选工具macos.py
+          grep "IS_TRIAL_BUILD" 图片编号挑选工具macos.py  # 确认修改成功
+
       - name: Build macOS app (Trial - 免激活)
         env:
-          SKIP_LICENSE: "1"  # 跳过授权检查
           MACOSX_DEPLOYMENT_TARGET: '11.0'  # 最低支持 macOS 11 Big Sur
         run: |
           arch -x86_64 python setup.py py2app

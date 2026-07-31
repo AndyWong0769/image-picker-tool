@@ -47,6 +47,10 @@ from collections import defaultdict
 IS_MACOS = sys.platform == 'darwin'
 IS_WINDOWS = sys.platform == 'win32'
 
+# 试用版构建标记 — CI 构建试用版时会 sed 替换为 True
+# 试用版跳过授权验证，改用 5 天试用期逻辑
+IS_TRIAL_BUILD = False
+
 
 # ============================================================
 # macOS 专用工具函数
@@ -247,7 +251,7 @@ def check_license():
         return True, "Windows 版无需激活"
 
     # 如果跳过授权（试用版构建）
-    if os.environ.get('SKIP_LICENSE') == '1':
+    if IS_TRIAL_BUILD:
         return check_trial()
 
     serial = get_mac_serial()
@@ -897,7 +901,7 @@ class ImagePickerApp:
 
         # macOS 授权检查（启动后延迟弹出，避免影响加载）
         # 环境变量 SKIP_LICENSE=1 可跳过授权（用于试用版构建）
-        if IS_MACOS and os.environ.get('SKIP_LICENSE') != '1':
+        if IS_MACOS and not IS_TRIAL_BUILD:
             self.root.after(500, self._check_license_on_startup)
 
     def _setup_styles(self):
@@ -2024,7 +2028,7 @@ class ImagePickerApp:
 
     def _add_trial_banner(self):
         """在界面顶部添加试用期提示条"""
-        if os.environ.get('SKIP_LICENSE') != '1':
+        if not IS_TRIAL_BUILD:
             return
         ok, remaining, msg = check_trial()
         if not ok:
@@ -2072,7 +2076,7 @@ class LicenseDialog:
         main.pack(fill=tk.BOTH, expand=True)
 
         # 标题 - 根据是否试用版显示不同文案
-        if os.environ.get('SKIP_LICENSE') == '1':
+        if IS_TRIAL_BUILD:
             tk.Label(main, text="⏳ 试用期已结束", bg=bg, fg=accent,
                      font=(sys_font, 16, "bold")).pack(anchor="w")
             tk.Label(main, text="请购买激活码永久使用", bg=bg, fg=ash,
@@ -2094,12 +2098,10 @@ class LicenseDialog:
         serial_row.pack(fill=tk.X, pady=(4, 0))
 
         serial = get_mac_serial()
-        serial_entry = tk.Entry(serial_row, font=(mono_font, 11), bg=ImagePickerApp.BG,
-                                fg=ink, insertbackground=ink, relief="flat",
-                                highlightthickness=1, highlightbackground=ImagePickerApp.BORDER)
-        serial_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6)
-        serial_entry.insert(0, serial)
-        serial_entry.config(state="readonly")
+        serial_entry = tk.Label(serial_row, text=serial, font=(mono_font, 11),
+                                bg=surface, fg=ink,
+                                anchor="w", padx=8, pady=6)
+        serial_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # 复制按钮
         def copy_serial():
