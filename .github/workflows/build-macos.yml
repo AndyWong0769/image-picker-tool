@@ -8,8 +8,8 @@ on:
 
 jobs:
   build:
-    # 使用 Intel runner 以兼容更多虚拟机 (macos-13 已退役)
-    runs-on: macos-15-intel
+    # Apple Silicon runner (macos-13 Intel 已于2025年12月退役)
+    runs-on: macos-15
 
     steps:
       - name: Checkout code

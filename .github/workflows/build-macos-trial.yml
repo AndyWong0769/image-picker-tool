@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15-intel  # Intel runner (macos-13 已退役)
+    runs-on: macos-15  # Apple Silicon (macos-13 Intel 已于2025年12月退役)
 
     steps:
       - name: Checkout code
