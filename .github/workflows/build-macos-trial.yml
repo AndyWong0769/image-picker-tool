@@ -23,14 +23,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install py2app pillow
+          arch -x86_64 pip install py2app pillow
 
       - name: Build macOS app (Trial - 免激活)
         env:
           SKIP_LICENSE: "1"  # 跳过授权检查
           MACOSX_DEPLOYMENT_TARGET: '11.0'  # 最低支持 macOS 11 Big Sur
         run: |
-          python setup.py py2app
+          arch -x86_64 python setup.py py2app
 
       - name: Create DMG
         run: |
