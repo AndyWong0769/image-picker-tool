@@ -2118,9 +2118,8 @@ class LicenseDialog:
             copy_btn.config(text="✓ 已复制")
             self.top.after(1500, lambda: copy_btn.config(text="复制"))
 
-        copy_btn = tk.Button(serial_row, text="复制", command=copy_serial,
-                             bg=accent, fg="#ffffff", relief="flat", padx=12,
-                             font=(sys_font, 9))
+        copy_btn = ttk.Button(serial_row, text="复制", style='Accent.TButton',
+                               command=copy_serial)
         copy_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
         # 激活码输入
@@ -2143,9 +2142,8 @@ class LicenseDialog:
         self.status_label.pack(fill=tk.X, pady=(0, 8))
 
         # 激活按钮
-        self.act_btn = tk.Button(main, text="激 活", command=self._activate,
-                                 bg=accent, fg="#ffffff", relief="flat",
-                                 font=(sys_font, 12, "bold"), padx=20, pady=8)
+        self.act_btn = ttk.Button(main, text="激 活", style='Accent.TButton',
+                                   command=self._activate)
         self.act_btn.pack(fill=tk.X, ipady=4)
 
         # 提示文字
@@ -2236,8 +2234,8 @@ class FindRawDialog:
         tk.Entry(jpg_row, textvariable=self.jpg_folder, font=(self.mono_font, 9),
                  bg=bg, fg=ink, insertbackground=ink, relief="flat",
                  highlightthickness=1, highlightbackground=border).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, ipady=5)
-        tk.Button(jpg_row, text="浏览", command=lambda: self._browse('jpg'),
-                  bg=surface, fg=ink, relief="flat", padx=12).pack(side=tk.LEFT)
+        ttk.Button(jpg_row, text="浏览", style='Ghost.TButton',
+                   command=lambda: self._browse('jpg'), width=6).pack(side=tk.LEFT)
 
         # RAW文件夹行
         raw_row = tk.Frame(main_frame, bg=bg)
@@ -2247,8 +2245,8 @@ class FindRawDialog:
         tk.Entry(raw_row, textvariable=self.raw_folder, font=(self.mono_font, 9),
                  bg=bg, fg=ink, insertbackground=ink, relief="flat",
                  highlightthickness=1, highlightbackground=border).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, ipady=5)
-        tk.Button(raw_row, text="浏览", command=lambda: self._browse('raw'),
-                  bg=surface, fg=ink, relief="flat", padx=12).pack(side=tk.LEFT)
+        ttk.Button(raw_row, text="浏览", style='Ghost.TButton',
+                   command=lambda: self._browse('raw'), width=6).pack(side=tk.LEFT)
 
         # 输出目录行
         out_row = tk.Frame(main_frame, bg=bg)
@@ -2259,8 +2257,8 @@ class FindRawDialog:
                  bg=bg, fg=ink, insertbackground=ink, relief="flat",
                  highlightthickness=1, highlightbackground=border)
         self.out_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, ipady=5)
-        tk.Button(out_row, text="浏览", command=lambda: self._browse('out'),
-                  bg=surface, fg=ink, relief="flat", padx=12).pack(side=tk.LEFT)
+        ttk.Button(out_row, text="浏览", style='Ghost.TButton',
+                   command=lambda: self._browse('out'), width=6).pack(side=tk.LEFT)
 
         # 输出目录占位提示
         self._out_placeholder = "不填写默认导出到JPG目录下RAW文件夹"
@@ -2274,15 +2272,13 @@ class FindRawDialog:
         btn_row.pack(fill=tk.X, pady=10)
 
         # 两个按钮颜色一样，EXIF在前，文件名匹配在后
-        btn_style = {"bg": accent, "fg": "#ffffff", "relief": "flat", "padx": 20, "pady": 8,
-                      "font": (self.sys_font, 9, "bold")}
 
-        self.exif_btn = tk.Button(btn_row, text="EXIF 匹配", command=self._start_exif,
-                                  **btn_style)
+        self.exif_btn = ttk.Button(btn_row, text="EXIF 匹配", style='Accent.TButton',
+                                   command=self._start_exif)
         self.exif_btn.pack(side=tk.RIGHT, padx=(8, 0))
 
-        self.match_btn = tk.Button(btn_row, text="文件名匹配", command=self._start_match,
-                                   **btn_style)
+        self.match_btn = ttk.Button(btn_row, text="文件名匹配", style='Accent.TButton',
+                                    command=self._start_match)
         self.match_btn.pack(side=tk.RIGHT)
 
         # 状态行
@@ -2365,9 +2361,8 @@ class FindRawDialog:
         self.unmatched_label = tk.Label(bottom_row, text="0 未匹配", bg=bg, fg=error, font=(self.sys_font, 9, "bold"))
         self.unmatched_label.pack(side=tk.LEFT, padx=(12, 0))
 
-        tk.Button(bottom_row, text="导出选中的RAW", command=self._export_selected,
-                  bg=accent, fg="#ffffff", relief="flat", padx=16, pady=6,
-                  font=(self.sys_font, 9, "bold")).pack(side=tk.RIGHT)
+        ttk.Button(bottom_row, text="导出选中的RAW", style='Accent.TButton',
+                   command=self._export_selected).pack(side=tk.RIGHT)
 
     def _bind_mousewheel(self, widget):
         """跨平台鼠标滚轮绑定"""
@@ -2497,9 +2492,9 @@ class FindRawDialog:
 
         # 更新EXIF按钮状态
         if unmatched > 0:
-            self.exif_btn.config(state=tk.NORMAL, bg=ImagePickerApp.ACCENT, fg="#ffffff")
+            self.exif_btn.config(state=tk.NORMAL)
         else:
-            self.exif_btn.config(state=tk.DISABLED, bg="#3a3a4e", fg="#666666")
+            self.exif_btn.config(state=tk.DISABLED)
 
         # 填充表格
         self.tree.delete(*self.tree.get_children())
