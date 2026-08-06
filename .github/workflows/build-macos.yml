@@ -30,9 +30,9 @@ jobs:
           python -m pip install --upgrade pip
           arch -x86_64 pip install py2app pillow
 
-      - name: Build macOS app (x86_64, min macOS 11 Big Sur)
+      - name: Build macOS app (x86_64, min macOS 10.15 Catalina)
         env:
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
+          MACOSX_DEPLOYMENT_TARGET: '10.15'
         run: |
           arch -x86_64 python setup.py py2app
 

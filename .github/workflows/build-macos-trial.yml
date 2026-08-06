@@ -32,7 +32,7 @@ jobs:
 
       - name: Build macOS app (Trial - 免激活)
         env:
-          MACOSX_DEPLOYMENT_TARGET: '11.0'  # 最低支持 macOS 11 Big Sur
+          MACOSX_DEPLOYMENT_TARGET: '10.15'  # 最低支持 macOS 10.15 Catalina
         run: |
           arch -x86_64 python setup.py py2app
 
