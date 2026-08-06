@@ -39,8 +39,8 @@ OPTIONS = {
         # macOS 显示名称
         'CFBundleGetInfoString': '图片编号挑选工具 v4.0',
 
-        # 最低支持 macOS 11 Big Sur（兼容所有主流 Mac）
-        'LSMinimumSystemVersion': '11.0',
+        # 最低支持 macOS 10.15 Catalina（兼容所有主流 Mac）
+        'LSMinimumSystemVersion': '10.15',
 
         # 高分辨率支持
         'NSHighResolutionCapable': True,
