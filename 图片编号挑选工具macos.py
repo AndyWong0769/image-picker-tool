@@ -220,8 +220,9 @@ def get_trial_file_path():
 
 
 def check_trial():
-    """检查试用期状态，返回 (是否可用, 剩余天数, 消息)"""
+    """检查试用期状态，返回 (是否可用, 剩余小时数, 消息)"""
     trial_file = get_trial_file_path()
+    TRIAL_HOURS = 120  # 120小时 = 5天
 
     if not os.path.exists(trial_file):
         # 首次启动，记录开始时间
@@ -231,22 +232,22 @@ def check_trial():
                 json.dump({'start': now}, f)
         except Exception:
             pass
-        return True, 5, "试用期第 1 天，共 5 天"
+        return True, TRIAL_HOURS, f"试用期第 1 小时，共 {TRIAL_HOURS} 小时"
 
     try:
         with open(trial_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         start_str = data.get('start', '')
         start = datetime.fromisoformat(start_str)
-        elapsed = (datetime.now() - start).days
-        remaining = 5 - elapsed
+        elapsed_hours = (datetime.now() - start).total_seconds() / 3600
+        remaining = TRIAL_HOURS - elapsed_hours
 
         if remaining > 0:
-            return True, remaining, f"试用期剩余 {remaining} 天"
+            return True, remaining, f"试用期剩余 {int(remaining)} 小时"
         else:
             return False, 0, "试用期已结束，请购买激活"
     except Exception:
-        return True, 5, "试用期第 1 天，共 5 天"
+        return True, TRIAL_HOURS, f"试用期第 1 小时，共 {TRIAL_HOURS} 小时"
 
 
 def check_license():
@@ -312,9 +313,11 @@ def _resolve_mode(cn_value, mapping):
 
 
 def is_image_file(filename: str) -> bool:
-    """判断是否为图片文件（支持扩展名后跟中文备注如 .jpg 去1）"""
+    """判断是否为图片文件（支持扩展名前后跟中文备注如 .jpg 去1, 留2.jpg）"""
+    # 去掉扩展名前的备注（如 留2.jpg → .jpg）
+    name = re.sub(r'\s*(?:去|留)\d+(\.(?:jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif))$', r'\1', filename, flags=re.IGNORECASE)
     # 去掉扩展名后的备注部分（如 .jpg 去1 → .jpg）
-    name = re.sub(r'\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)\D.*$', r'.\1', filename, flags=re.IGNORECASE)
+    name = re.sub(r'\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)\D.*$', r'.\1', name, flags=re.IGNORECASE)
     return Path(name).suffix.lower() in IMAGE_EXTENSIONS
 
 
@@ -586,31 +589,38 @@ FILTER_OPTIONS = ["无", "去1", "去2", "去3", "留1", "留2", "留3"]
 def parse_match_filename(filename: str):
     """
     解析匹配目录文件名，返回 (编号, [图片列表], 原始备注)
-    例: "010-2608.2569.2583.jpg 去2" → ("010", ["2608","2569","2583"], "去2")
-        "003-2380.2375.2402.jpg"    → ("003", ["2380","2375","2402"], "")
-        "002-5364.5362.jpg留2"      → ("002", ["5364","5362"], "留2")
+    备注（去N/留N）支持多种位置和空格，均无视空格：
+      例: "010-2608.2569.2583.jpg 去2" → ("010", ["2608","2569","2583"], "去2")
+          "003-2380.2375.2402.jpg"    → ("003", ["2380","2375","2402"], "")
+          "002-5364.5362.jpg留2"      → ("002", ["5364","5362"], "留2")
+          "001-2596.2646.2599留2.jpg"  → ("001", ["2596","2646","2599"], "留2")
+          "001-2596.2646.2599 留2.jpg" → ("001", ["2596","2646","2599"], "留2")
+          "001-2596.2646.2599 留2"     → ("001", ["2596","2646","2599"], "留2")
     """
-    # 先提取末尾备注（去1/去2/去3/留1/留2/留3）
     note = ""
-    end_part = filename
-    # 去掉扩展名前面的部分，只保留扩展名及后面
-    m = re.search(r'\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)(.*)$', end_part, flags=re.IGNORECASE)
+    clean = filename
+
+    # 模式1: 扩展名后有备注（如 "xxx.jpg 去2" 或 "xxx.jpg去2"）
+    m = re.search(r'\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)(\s*)(去\d+|留\d+)\s*$', clean, flags=re.IGNORECASE)
     if m:
-        after_ext = m.group(2)  # 扩展名后面的部分（可能含空格+备注）
-        after_ext_stripped = after_ext.strip()
-        for opt in FILTER_OPTIONS[1:]:
-            if after_ext_stripped == opt:
-                note = opt
-                break
-    # 去掉扩展名及后面的备注，获取纯文件名部分
-    clean = re.sub(r'\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)\D.*$', '', filename, flags=re.IGNORECASE).strip()
-    # 如果备注紧挨扩展名（无空格），从 clean 末尾再检查一次
-    if not note:
-        for opt in FILTER_OPTIONS[1:]:
-            if clean.endswith(opt):
-                note = opt
-                clean = clean[:-len(opt)].strip()
-                break
+        note = m.group(3)
+        clean = clean[:m.start()]
+    else:
+        # 模式2: 扩展名前有备注（如 "xxx留2.jpg" 或 "xxx 留2.jpg"）
+        m = re.search(r'^(.*?)(\s*)(去\d+|留\d+)(\s*)\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)\s*$', clean, flags=re.IGNORECASE)
+        if m:
+            note = m.group(3)
+            clean = m.group(1).strip()
+        else:
+            # 模式3: 无扩展名，末尾有备注（如 "xxx 留2" 或 "xxx留2"）
+            m = re.search(r'^(.*?)(\s*)(去\d+|留\d+)\s*$', clean)
+            if m:
+                note = m.group(3)
+                clean = m.group(1).strip()
+            else:
+                # 模式4: 无备注，去掉扩展名
+                clean = re.sub(r'\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif)\s*$', '', clean, flags=re.IGNORECASE).strip()
+
     stem = clean
     # 按 - 分割
     parts = stem.split('-', 1)
@@ -625,12 +635,17 @@ def parse_match_filename(filename: str):
     return (file_num, images, note)
 
 
-def apply_filter(images: list, note: str) -> list:
+def apply_filter(images: list, note: str, swap_13: bool = False) -> list:
     """
     应用备注过滤，返回需要匹配的图片列表
     去N = 去掉第N张图（1-based）
     留N = 只保留第N张图
+    swap_13 = True 时，先对调第1和第3张图的位置再应用过滤
     """
+    # 先对调1&3（如果启用）
+    if swap_13 and len(images) >= 3:
+        images = list(images)  # 复制一份，避免修改原列表
+        images[0], images[2] = images[2], images[0]
     if not note or note == "无":
         return images
     if note.startswith('留'):
@@ -885,6 +900,7 @@ class ImagePickerApp:
         self.match_result = None
         self.running = False
         self.min_digits = tk.IntVar(value=4)
+        self.swap_13_var = tk.BooleanVar(value=False)  # 1&3对调（默认不勾选）
         self.match_mode = None  # 在 _build_ui 中设为 Combobox
         self.op_mode = None     # 在 _build_ui 中设为 Combobox
         self.dup_mode = None    # 在 _build_ui 中设为 Combobox
@@ -954,11 +970,13 @@ class ImagePickerApp:
         s.configure('Accent.TButton', background=self.ACCENT, foreground='#ffffff',
                     font=(self.sys_font, 9), padding=(10, 6))
         s.map('Accent.TButton',
-              background=[('active', self.ACCENT_HOVER), ('!disabled', self.ACCENT)])
+              background=[('active', self.ACCENT_HOVER), ('!disabled', self.ACCENT)],
+              foreground=[('!disabled', '#ffffff'), ('disabled', self.ASH)])
 
         s.configure('Ghost.TButton', background=self.BG, foreground=self.ASH,
                     font=(self.sys_font, 9), padding=(10, 6))
-        s.map('Ghost.TButton', background=[('active', '#222232')])
+        s.map('Ghost.TButton', background=[('active', '#222232')],
+              foreground=[('!disabled', self.ASH), ('disabled', '#5a5a70')])
 
         # 输入框
         s.configure('TEntry', fieldbackground=self.BG, foreground=self.INK,
@@ -1145,13 +1163,20 @@ class ImagePickerApp:
         self.prefix_entry = tk.Entry(param_card, textvariable=self.prefix_var, font=(self.mono_font, 8),
                  bg=self.BG, fg=self.INK, insertbackground=self.INK,
                  highlightthickness=0, bd=1, relief='solid',
-                 highlightbackground=self.BORDER, width=12)
-        self.prefix_entry.grid(row=1, column=1, columnspan=5, sticky='ew', pady=(4, 0))
+                 highlightbackground=self.BORDER, width=5)
+        self.prefix_entry.grid(row=1, column=1, columnspan=3, sticky='ew', pady=(4, 0))
 
         self._prefix_hint = "# #=数字  例: ###- 0## FDV-"
         self._set_prefix_placeholder()
         self.prefix_entry.bind('<FocusIn>', lambda e: self._clear_prefix_placeholder())
         self.prefix_entry.bind('<FocusOut>', lambda e: self._set_prefix_placeholder() if not self.prefix_entry.get().strip() else None)
+
+        # 1&3对调勾选框（放在开头序号过滤同行右侧）
+        self.swap_13_cb = tk.Checkbutton(param_card, text="1&3对调", variable=self.swap_13_var,
+                 bg=self.SURFACE, fg=self.ASH, activebackground=self.SURFACE,
+                 activeforeground=self.INK, selectcolor=self.BG,
+                 font=(self.sys_font, 8), command=self._on_swap_changed)
+        self.swap_13_cb.grid(row=1, column=4, columnspan=2, sticky='w', pady=(4, 0), padx=(2, 0))
 
         # 匹配目录文件列表
         self.file_card = tk.Frame(mid_col, bg=self.SURFACE, highlightbackground=self.BORDER,
@@ -1505,11 +1530,11 @@ class ImagePickerApp:
         )
 
     def _get_clean_filename(self, filename):
-        """去掉文件名末尾的去/留备注，返回纯文件名"""
-        # 去掉扩展名后的备注
-        clean = re.sub(r'\s*(去|留)\d(\..*)?$', '', filename).strip()
-        # 如果扩展名后面有备注也去掉
-        clean = re.sub(r'(\.(jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif))\D.*$', r'\1', clean, flags=re.IGNORECASE)
+        """去掉文件名中的去/留备注，返回纯文件名（保留扩展名）"""
+        # 去掉扩展名后的备注（如 .jpg 去1 → .jpg, .jpg去1 → .jpg）
+        clean = re.sub(r'(\.(?:jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif))\s*(?:去|留)\d+\s*$', r'\1', filename, flags=re.IGNORECASE)
+        # 去掉扩展名前的备注（如 留2.jpg → .jpg, 留2 → 空）
+        clean = re.sub(r'\s*(?:去|留)\d+(\.(?:jpg|jpeg|png|bmp|gif|tiff|tif|webp|heic|heif))?$', lambda m: m.group(1) or '', clean, flags=re.IGNORECASE)
         return clean if clean else filename
 
     def _multi_select(self, event, idx):
@@ -1630,6 +1655,12 @@ class ImagePickerApp:
             if idx < len(self._file_rows):
                 self._restore_bg(idx)
 
+    def _on_swap_changed(self):
+        """1&3对调勾选变化时刷新预览"""
+        swap = self.swap_13_var.get()
+        self._log(f"1&3对调: {'开启' if swap else '关闭'}")
+        self._refresh_preview()
+
     def _batch_filter(self, note):
         """批量设置过滤条件"""
         if not self._selected_files:
@@ -1668,13 +1699,14 @@ class ImagePickerApp:
 
     # ── 编号列表 ──
     def _get_active_numbers(self) -> list:
-        """获取经过过滤后的有效编号列表（去重）"""
+        """获取经过过滤后的有效编号列表（去重），应用1&3对调设置"""
         if not hasattr(self, '_file_rows'):
             return []
+        swap_13 = self.swap_13_var.get() if hasattr(self, 'swap_13_var') else False
         numbers = []
         for row in self._file_rows:
             note = row.get('current_note', '')
-            filtered = apply_filter(row['images'], note)
+            filtered = apply_filter(row['images'], note, swap_13=swap_13)
             numbers.extend(filtered)
         # 去重保序
         seen = set()
@@ -1941,6 +1973,7 @@ class ImagePickerApp:
                 f.write(f"digits={self.min_digits.get()}\n")
                 prefix_val = '' if self._is_prefix_placeholder() else self.prefix_var.get()
                 f.write(f"prefix={prefix_val}\n")
+                f.write(f"swap_13={'1' if self.swap_13_var.get() else '0'}\n")
         except Exception:
             pass
 
@@ -1972,6 +2005,8 @@ class ImagePickerApp:
                                 self.prefix_entry.config(fg=self.INK)
                             else:
                                 self._set_prefix_placeholder()
+                        elif line.startswith('swap_13='):
+                            self.swap_13_var.set(line[8:] == '1')
         except Exception:
             pass
 
