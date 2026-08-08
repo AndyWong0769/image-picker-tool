@@ -39,21 +39,21 @@ jobs:
       - name: Create DMG
         run: |
           cd dist
-          hdiutil create -volname "拼版挑图" -srcfolder "拼版挑图.app" -ov -format UDZO ../拼版挑图.dmg
+          hdiutil create -volname "拼版挑片" -srcfolder "拼版挑片.app" -ov -format UDZO ../拼版挑片.dmg
           cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 拼版挑图-macos
-          path: 拼版挑图.dmg
+          name: 拼版挑片-macos
+          path: 拼版挑片.dmg
           retention-days: 30
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: 拼版挑图.dmg
+          files: 拼版挑片.dmg
           draft: false
           prerelease: false
         env:
