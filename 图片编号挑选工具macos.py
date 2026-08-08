@@ -921,7 +921,6 @@ class ImagePickerApp:
         self._setup_styles()
         self._build_ui()
         self._load_settings()
-        self._auto_scan_on_startup()
 
         # 退出时自动保存当前设置
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -932,7 +931,14 @@ class ImagePickerApp:
         if IS_MACOS:
             self.root.bind('<Command-r>', lambda e: self._refresh_extract())
 
-        # 试用版：显示倒计时条 + 试用到期检查（延迟到 mainloop 之后，避免 py2app 闪退）
+        # 所有可能触发 py2app 闪退的操作都延迟到 mainloop 之后
+        self.root.after(300, self._post_init)
+
+    def _post_init(self):
+        """mainloop 启动后的延迟初始化（避免 py2app 闪退）"""
+        self._auto_scan_on_startup()
+
+        # 试用版：显示倒计时条 + 试用到期检查
         if IS_MACOS and IS_TRIAL_BUILD:
             self._add_trial_banner()
             self.root.after(500, self._check_trial_on_startup)
