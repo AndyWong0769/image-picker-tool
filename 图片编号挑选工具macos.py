@@ -813,7 +813,13 @@ class ImagePickerApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("图片编号挑选工具")
+        # 试用版在标题中标注
+        _title = "图片编号挑选工具"
+        if IS_MACOS and IS_TRIAL_BUILD:
+            _title = "图片编号挑选工具-试用版"
+        elif IS_WINDOWS and IS_TRIAL_BUILD:
+            _title = "图片编号挑选工具-试用版"
+        self.root.title(_title)
         self.root.geometry("1000x820")
         self.root.minsize(800, 500)  # 最小宽度 800，防止内容挤压
         self.root.resizable(True, True)  # 宽度高度均可自由调整
@@ -2092,28 +2098,25 @@ class ImagePickerApp:
         if not ok:
             return  # 试用期结束会弹对话框
 
-        # 始终显示倒计时条
+        # 始终显示倒计时条 - 放在主窗口最顶部
         remaining_secs = int(remaining * 3600)  # 小时转秒
         banner = tk.Frame(self.root, bg="#3a3a4e", padx=8, pady=4)
-        children = self.root.winfo_children()
-        if children:
-            banner.pack(fill=tk.X, side=tk.TOP, before=children[0])
-        else:
-            banner.pack(fill=tk.X, side=tk.TOP)
+        # 使用 lower 确保 banner 在最底层（不被 main 遮挡）
+        banner.pack(fill=tk.X, side=tk.TOP, before=self.root.winfo_children()[0] if self.root.winfo_children() else None)
         banner.pack_propagate(False)
-        banner.configure(height=32)
+        banner.configure(height=36)
 
         self._trial_dot = tk.Label(banner, text="◷", bg="#3a3a4e", fg="#f0c674",
-                                  font=(self.sys_font, 10, "bold"))
+                                  font=(self.sys_font, 12, "bold"))
         self._trial_dot.pack(side=tk.LEFT, padx=(10, 6))
 
         self._trial_label = tk.Label(banner, text="", bg="#3a3a4e", fg="#f0c674",
-                                      font=(self.sys_font, 9))
+                                      font=(self.sys_font, 10, "bold"))
         self._trial_label.pack(side=tk.LEFT)
 
         self._trial_tip = tk.Label(banner, text="试用结束后需购买激活码",
                                     bg="#3a3a4e", fg="#9090a8",
-                                    font=(self.sys_font, 8))
+                                    font=(self.sys_font, 9))
         self._trial_tip.pack(side=tk.RIGHT, padx=10)
 
         self._trial_remaining_secs = [remaining_secs]

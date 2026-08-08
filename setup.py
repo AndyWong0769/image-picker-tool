@@ -26,8 +26,8 @@ OPTIONS = {
 
     'plist': {
         # 应用基本信息
-        'CFBundleName': '图片编号挑选工具',
-        'CFBundleDisplayName': '图片编号挑选工具',
+        'CFBundleName': '图片编号挑选工具试用版',
+        'CFBundleDisplayName': '图片编号挑选工具试用版',
         'CFBundleIdentifier': 'com.imagepicker.app',
         'CFBundleVersion': '4.0.0',
         'CFBundleShortVersionString': '4.0.0',
