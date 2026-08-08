@@ -39,12 +39,12 @@ jobs:
       - name: Create DMG
         run: |
           cd dist
-          hdiutil create -volname "图片编号挑选工具-免费版" -srcfolder "图片编号挑选工具.app" -ov -format UDZO ../图片编号挑选工具-免费版.dmg
+          hdiutil create -volname "拼版挑图-免费版" -srcfolder "图片编号挑选工具.app" -ov -format UDZO ../拼版挑图-免费版.dmg
           cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 图片编号挑选工具-免费版-macos
-          path: 图片编号挑选工具-免费版.dmg
+          name: 拼版挑图-免费版-macos
+          path: 拼版挑图-免费版.dmg
           retention-days: 30
