@@ -2728,52 +2728,34 @@ class FindRawDialog:
         threading.Thread(target=worker, daemon=True).start()
 
 
-def _run_license_flow(root):
+def _check_license_status():
     """
-    macOS 授权流程：
-    - 试用版：检查试用期，过期则弹窗退出
-    - 一机一码版：未激活则弹窗，激活成功后返回 True
-    - 免费版/Windows：直接返回 True
+    检查授权状态，返回 (是否可用, 状态码, 消息)
+    状态码: 'ok' | 'trial_expired' | 'not_activated'
     """
     # 免费版无需检查
     if IS_FREE_BUILD:
-        return True
+        return True, 'ok', '免费版'
 
     # 试用版：检查试用期
     if IS_TRIAL_BUILD:
         ok, remaining, msg = check_trial()
         if not ok:
-            # 试用过期 → 弹窗并退出
-            messagebox.showerror("试用到期",
-                                 "24小时试用已结束！\n请联系开发者购买正式版。")
-            return False
-        return True  # 试用中，允许进入
+            return False, 'trial_expired', '24小时试用已结束！'
+        return True, 'ok', msg
 
     # 一机一码版（macOS 正式版）
     if IS_MACOS:
         ok, msg = check_license()
         if ok:
-            return True  # 已激活
+            return True, 'ok', '已激活'
+        return False, 'not_activated', '未激活'
 
-        # 未激活 → 弹出激活对话框
-        result = {'activated': False}
-
-        def _on_close():
-            result['activated'] = check_license()[0]
-            dlg.top.destroy()
-
-        dlg = LicenseDialog(root)
-        dlg.top.protocol('WM_DELETE_WINDOW', _on_close)
-        dlg.top.wait_window(dlg.top)
-
-        return result['activated']
-
-    return True
+    return True, 'ok', ''
 
 
 def main():
     root = tk.Tk()
-    root.withdraw()  # 先隐藏，授权通过后再显示
 
     # Windows DPI 感知（仅 Windows）
     if IS_WINDOWS:
@@ -2784,12 +2766,33 @@ def main():
             pass
 
     # 授权检查（在创建主程序之前）
-    if not _run_license_flow(root):
-        root.destroy()
-        sys.exit()
+    if IS_MACOS:
+        ok, status, msg = _check_license_status()
+        if not ok:
+            if status == 'trial_expired':
+                # 试用过期 → 弹窗并退出
+                root.withdraw()
+                messagebox.showerror("试用到期", msg + "\n请联系开发者购买正式版。")
+                root.destroy()
+                sys.exit()
+            elif status == 'not_activated':
+                # 未激活 → 弹出激活对话框
+                result = {'activated': False}
 
-    # 授权通过 → 显示主窗口并启动
-    root.deiconify()
+                def _on_close():
+                    ok2, _, _ = _check_license_status()
+                    result['activated'] = ok2
+                    dlg.top.destroy()
+
+                dlg = LicenseDialog(root)
+                dlg.top.protocol('WM_DELETE_WINDOW', _on_close)
+                dlg.top.wait_window(dlg.top)
+
+                if not result['activated']:
+                    root.destroy()
+                    sys.exit()
+
+    # 授权通过 → 启动主程序
     ImagePickerApp(root)
     root.mainloop()
 
