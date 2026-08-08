@@ -932,9 +932,10 @@ class ImagePickerApp:
         if IS_MACOS:
             self.root.bind('<Command-r>', lambda e: self._refresh_extract())
 
-        # 试用版：显示倒计时条
+        # 试用版：显示倒计时条 + 试用到期检查（延迟到 mainloop 之后，避免 py2app 闪退）
         if IS_MACOS and IS_TRIAL_BUILD:
             self._add_trial_banner()
+            self.root.after(500, self._check_trial_on_startup)
 
     def _setup_styles(self):
         s = ttk.Style()
@@ -2151,6 +2152,14 @@ class ImagePickerApp:
         import sys
         sys.exit()
 
+    def _check_trial_on_startup(self):
+        """启动时检查试用期，过期则弹窗并退出（延迟到 mainloop 之后执行）"""
+        ok, remaining, msg = check_trial()
+        if not ok:
+            messagebox.showerror("试用到期", "24小时试用已结束！\n请联系开发者购买正式版。")
+            self.root.destroy()
+            sys.exit()
+
 
 class LicenseDialog:
     """授权激活对话框"""
@@ -2774,11 +2783,7 @@ def _log(msg):
 
 
 def main():
-    _log("=== main() start ===")
-    _log(f"IS_MACOS={IS_MACOS}, IS_TRIAL_BUILD={IS_TRIAL_BUILD}, IS_FREE_BUILD={IS_FREE_BUILD}")
-
     root = tk.Tk()
-    _log("tk.Tk() created")
 
     # Windows DPI 感知（仅 Windows）
     if IS_WINDOWS:
@@ -2788,42 +2793,8 @@ def main():
         except Exception:
             pass
 
-    # 授权检查（在创建主程序之前）
-    if IS_MACOS:
-        _log("macOS: checking license...")
-        ok, status, msg = _check_license_status()
-        _log(f"license check: ok={ok}, status={status}, msg={msg}")
-
-        if not ok:
-            if status == 'trial_expired':
-                _log("trial expired, showing error")
-                # 试用过期 → 弹窗并退出
-                messagebox.showerror("试用到期", msg + "\n请联系开发者购买正式版。",
-                                     parent=root)
-                root.destroy()
-                sys.exit()
-            elif status == 'not_activated':
-                _log("not activated, showing license dialog")
-                # 未激活 → 弹出激活对话框
-                result = {'activated': False}
-
-                def _on_close():
-                    ok2, _, _ = _check_license_status()
-                    result['activated'] = ok2
-                    dlg.top.destroy()
-
-                dlg = LicenseDialog(root)
-                dlg.top.protocol('WM_DELETE_WINDOW', _on_close)
-                dlg.top.wait_window(dlg.top)
-
-                if not result['activated']:
-                    root.destroy()
-                    sys.exit()
-
-    _log("license OK, creating ImagePickerApp")
-    # 授权通过 → 启动主程序
+    # 启动主程序（试用倒计时条在 ImagePickerApp.__init__ 内通过 after 延迟加载）
     ImagePickerApp(root)
-    _log("starting mainloop")
     root.mainloop()
 
 

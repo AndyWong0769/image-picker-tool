@@ -33,11 +33,20 @@ import base64
 import hashlib
 import threading
 import subprocess
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-from datetime import datetime
-from pathlib import Path
-from collections import defaultdict
+
+# ── 最早期的错误捕获（import 阶段） ──
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, scrolledtext
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+except Exception as _e:
+    import traceback
+    _log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_crash.log')
+    with open(_log_path, 'w', encoding='utf-8') as _f:
+        _f.write(f"Import crash: {_e}\n\n{traceback.format_exc()}")
+    raise
 
 
 # ============================================================
@@ -923,9 +932,10 @@ class ImagePickerApp:
         if IS_MACOS:
             self.root.bind('<Command-r>', lambda e: self._refresh_extract())
 
-        # 试用版：显示倒计时条
+        # 试用版：显示倒计时条 + 试用到期检查（延迟到 mainloop 之后，避免 py2app 闪退）
         if IS_MACOS and IS_TRIAL_BUILD:
             self._add_trial_banner()
+            self.root.after(500, self._check_trial_on_startup)
 
     def _setup_styles(self):
         s = ttk.Style()
@@ -2142,6 +2152,14 @@ class ImagePickerApp:
         import sys
         sys.exit()
 
+    def _check_trial_on_startup(self):
+        """启动时检查试用期，过期则弹窗并退出（延迟到 mainloop 之后执行）"""
+        ok, remaining, msg = check_trial()
+        if not ok:
+            messagebox.showerror("试用到期", "24小时试用已结束！\n请联系开发者购买正式版。")
+            self.root.destroy()
+            sys.exit()
+
 
 class LicenseDialog:
     """授权激活对话框"""
@@ -2754,6 +2772,16 @@ def _check_license_status():
     return True, 'ok', ''
 
 
+def _log(msg):
+    """写入桌面日志文件（调试用）"""
+    try:
+        log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_debug.log')
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"{msg}\n")
+    except Exception:
+        pass
+
+
 def main():
     root = tk.Tk()
 
@@ -2765,37 +2793,25 @@ def main():
         except Exception:
             pass
 
-    # 授权检查（在创建主程序之前）
-    if IS_MACOS:
-        ok, status, msg = _check_license_status()
-        if not ok:
-            if status == 'trial_expired':
-                # 试用过期 → 弹窗并退出
-                root.withdraw()
-                messagebox.showerror("试用到期", msg + "\n请联系开发者购买正式版。")
-                root.destroy()
-                sys.exit()
-            elif status == 'not_activated':
-                # 未激活 → 弹出激活对话框
-                result = {'activated': False}
-
-                def _on_close():
-                    ok2, _, _ = _check_license_status()
-                    result['activated'] = ok2
-                    dlg.top.destroy()
-
-                dlg = LicenseDialog(root)
-                dlg.top.protocol('WM_DELETE_WINDOW', _on_close)
-                dlg.top.wait_window(dlg.top)
-
-                if not result['activated']:
-                    root.destroy()
-                    sys.exit()
-
-    # 授权通过 → 启动主程序
+    # 启动主程序（试用倒计时条在 ImagePickerApp.__init__ 内通过 after 延迟加载）
     ImagePickerApp(root)
     root.mainloop()
 
 
+def _early_crash_log(msg):
+    """最早期的崩溃日志（尽可能早地写入）"""
+    try:
+        log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_crash.log')
+        import traceback
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"{msg}\n\n{traceback.format_exc()}")
+    except Exception:
+        pass
+
+
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        _early_crash_log(f"Main crash: {e}")
+        raise
