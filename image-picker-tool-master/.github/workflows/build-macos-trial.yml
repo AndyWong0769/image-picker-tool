@@ -42,12 +42,12 @@ jobs:
           # 自动检测 .app 文件名（py2app 可能根据 CFBundleDisplayName 生成不同名称）
           APP_NAME=$(ls -d *.app | head -1 | sed 's/\.app$//')
           echo "Detected app: $APP_NAME"
-          hdiutil create -volname "图片编号挑选工具-试用版" -srcfolder "${APP_NAME}.app" -ov -format UDZO "../图片编号挑选工具-试用版.dmg"
+          hdiutil create -volname "拼板挑图试用" -srcfolder "${APP_NAME}.app" -ov -format UDZO "../拼板挑图试用.dmg"
           cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 图片编号挑选工具-试用版-macos
-          path: 图片编号挑选工具-试用版.dmg
+          name: 拼板挑图试用-macos
+          path: 拼板挑图试用.dmg
           retention-days: 30

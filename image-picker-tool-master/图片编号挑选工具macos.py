@@ -815,10 +815,8 @@ class ImagePickerApp:
         self.root = root
         # 试用版在标题中标注
         _title = "图片编号挑选工具"
-        if IS_MACOS and IS_TRIAL_BUILD:
-            _title = "图片编号挑选工具-试用版"
-        elif IS_WINDOWS and IS_TRIAL_BUILD:
-            _title = "图片编号挑选工具-试用版"
+        if IS_TRIAL_BUILD:
+            _title = "拼板挑图试用"
         self.root.title(_title)
         self.root.geometry("1000x820")
         self.root.minsize(800, 500)  # 最小宽度 800，防止内容挤压
