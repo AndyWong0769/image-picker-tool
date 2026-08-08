@@ -48,7 +48,7 @@ IS_MACOS = sys.platform == 'darwin'
 IS_WINDOWS = sys.platform == 'win32'
 
 # 试用版构建标记 — CI 构建试用版时会 sed 替换为 True
-# 试用版跳过授权验证，改用 5 天试用期逻辑
+# 试用版跳过授权验证，改用 24 小时试用期逻辑
 IS_TRIAL_BUILD = False
 
 # 免费版构建标记 — CI 构建免费版时会 sed 替换为 True
@@ -222,7 +222,7 @@ def get_trial_file_path():
 def check_trial():
     """检查试用期状态，返回 (是否可用, 剩余小时数, 消息)"""
     trial_file = get_trial_file_path()
-    TRIAL_HOURS = 120  # 120小时 = 5天
+    TRIAL_HOURS = 24  # 24小时
 
     if not os.path.exists(trial_file):
         # 首次启动，记录开始时间
@@ -259,7 +259,7 @@ def check_license():
     if IS_FREE_BUILD:
         return True, "免费版"
 
-    # 试用版：5 天限时
+    # 试用版：24 小时限时
     if IS_TRIAL_BUILD:
         return check_trial()
 
@@ -927,6 +927,9 @@ class ImagePickerApp:
         # 环境变量 SKIP_LICENSE=1 可跳过授权（用于试用版构建）
         if IS_MACOS and not IS_TRIAL_BUILD:
             self.root.after(500, self._check_license_on_startup)
+        elif IS_TRIAL_BUILD:
+            # 试用版：显示倒计时条
+            self.root.after(300, self._add_trial_banner)
 
     def _setup_styles(self):
         s = ttk.Style()
@@ -2070,17 +2073,78 @@ class ImagePickerApp:
         LicenseDialog(self.root)
 
     def _add_trial_banner(self):
-        """在界面顶部添加试用期提示条"""
+        """在界面顶部添加试用期倒计时条（实时倒计时）"""
         if not IS_TRIAL_BUILD:
             return
         ok, remaining, msg = check_trial()
         if not ok:
             return  # 试用期结束会弹对话框
-        if remaining <= 5:
-            banner = tk.Frame(self.root, bg="#f0c674", padx=8, pady=4)
-            banner.pack(fill=tk.X, side=tk.TOP, before=self.root.winfo_children()[0] if self.root.winfo_children() else None)
-            tk.Label(banner, text=f"⏳ {msg}，购买后可永久使用", bg="#f0c674", fg="#1e1e2e",
-                     font=(self.sys_font, 9, "bold")).pack()
+
+        # 始终显示倒计时条
+        remaining_secs = int(remaining * 3600)  # 小时转秒
+        banner = tk.Frame(self.root, bg="#3a3a4e", padx=8, pady=4)
+        children = self.root.winfo_children()
+        if children:
+            banner.pack(fill=tk.X, side=tk.TOP, before=children[0])
+        else:
+            banner.pack(fill=tk.X, side=tk.TOP)
+        banner.pack_propagate(False)
+        banner.configure(height=32)
+
+        self._trial_dot = tk.Label(banner, text="◷", bg="#3a3a4e", fg="#f0c674",
+                                  font=(self.sys_font, 10, "bold"))
+        self._trial_dot.pack(side=tk.LEFT, padx=(10, 6))
+
+        self._trial_label = tk.Label(banner, text="", bg="#3a3a4e", fg="#f0c674",
+                                      font=(self.sys_font, 9))
+        self._trial_label.pack(side=tk.LEFT)
+
+        self._trial_tip = tk.Label(banner, text="试用结束后需购买激活码",
+                                    bg="#3a3a4e", fg="#9090a8",
+                                    font=(self.sys_font, 8))
+        self._trial_tip.pack(side=tk.RIGHT, padx=10)
+
+        self._trial_remaining_secs = [remaining_secs]
+        self._update_trial_countdown()
+        self.root.after(1000, self._tick_trial)
+
+    def _update_trial_countdown(self):
+        """更新倒计时显示"""
+        secs = self._trial_remaining_secs[0]
+        if secs <= 0:
+            h, m, s = 0, 0, 0
+        else:
+            h = secs // 3600
+            m = (secs % 3600) // 60
+            s = secs % 60
+        text = f"试用 {h:02d}:{m:02d}:{s:02d}"
+        self._trial_label.config(text=text)
+        # 剩余少于1小时变红色
+        if secs < 3600:
+            self._trial_label.config(fg="#ff6b6b")
+            self._trial_dot.config(fg="#ff6b6b")
+
+    def _tick_trial(self):
+        """每秒刷新倒计时"""
+        self._trial_remaining_secs[0] -= 1
+        if self._trial_remaining_secs[0] <= 0:
+            self._trial_label.config(text="试用 00:00:00", fg="#ff6b6b")
+            self._trial_dot.config(fg="#ff6b6b")
+            self.root.after(500, self._on_trial_expired_mac)
+            return
+        self._update_trial_countdown()
+        self.root.after(1000, self._tick_trial)
+
+    def _on_trial_expired_mac(self):
+        """试用到期处理"""
+        try:
+            import tkinter.messagebox as msgbox
+            msgbox.showerror("试用到期", "24小时试用已结束！\n请联系开发者购买正式版。")
+        except Exception:
+            pass
+        self.root.destroy()
+        import sys
+        sys.exit()
 
 
 class LicenseDialog:
