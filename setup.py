@@ -26,8 +26,8 @@ OPTIONS = {
 
     'plist': {
         # 应用基本信息
-        'CFBundleName': '拼板挑图试用',
-        'CFBundleDisplayName': '拼板挑图试用',
+        'CFBundleName': '拼版挑片',
+        'CFBundleDisplayName': '拼版挑片',
         'CFBundleIdentifier': 'com.imagepicker.app',
         'CFBundleVersion': '4.0.0',
         'CFBundleShortVersionString': '4.0.0',

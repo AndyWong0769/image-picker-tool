@@ -29,6 +29,7 @@ jobs:
         run: |
           sed -i '' 's/^IS_FREE_BUILD = False/IS_FREE_BUILD = True/' 图片编号挑选工具macos.py
           grep "IS_FREE_BUILD" 图片编号挑选工具macos.py  # 确认修改成功
+          sed -i '' "s/'CFBundleDisplayName': '拼版挑片'/'CFBundleDisplayName': '拼版挑片-免激活版'/" setup.py
 
       - name: Build macOS app (Free - 永久免费)
         env:

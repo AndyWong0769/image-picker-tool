@@ -29,6 +29,7 @@ jobs:
         run: |
           sed -i '' 's/^IS_TRIAL_BUILD = False/IS_TRIAL_BUILD = True/' 图片编号挑选工具macos.py
           grep "IS_TRIAL_BUILD" 图片编号挑选工具macos.py  # 确认修改成功
+          sed -i '' "s/'CFBundleDisplayName': '拼版挑片'/'CFBundleDisplayName': '拼版挑片试用'/" setup.py
 
       - name: Build macOS app (Trial - 免激活)
         env:
