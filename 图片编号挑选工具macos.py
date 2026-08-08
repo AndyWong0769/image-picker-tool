@@ -923,13 +923,9 @@ class ImagePickerApp:
         if IS_MACOS:
             self.root.bind('<Command-r>', lambda e: self._refresh_extract())
 
-        # macOS 授权检查（启动后延迟弹出，避免影响加载）
-        # 环境变量 SKIP_LICENSE=1 可跳过授权（用于试用版构建）
-        if IS_MACOS and not IS_TRIAL_BUILD:
-            self.root.after(500, self._check_license_on_startup)
-        elif IS_TRIAL_BUILD:
-            # 试用版：显示倒计时条
-            self.root.after(300, self._add_trial_banner)
+        # 试用版：显示倒计时条
+        if IS_MACOS and IS_TRIAL_BUILD:
+            self._add_trial_banner()
 
     def _setup_styles(self):
         s = ttk.Style()
@@ -2732,8 +2728,52 @@ class FindRawDialog:
         threading.Thread(target=worker, daemon=True).start()
 
 
+def _run_license_flow(root):
+    """
+    macOS 授权流程：
+    - 试用版：检查试用期，过期则弹窗退出
+    - 一机一码版：未激活则弹窗，激活成功后返回 True
+    - 免费版/Windows：直接返回 True
+    """
+    # 免费版无需检查
+    if IS_FREE_BUILD:
+        return True
+
+    # 试用版：检查试用期
+    if IS_TRIAL_BUILD:
+        ok, remaining, msg = check_trial()
+        if not ok:
+            # 试用过期 → 弹窗并退出
+            messagebox.showerror("试用到期",
+                                 "24小时试用已结束！\n请联系开发者购买正式版。")
+            return False
+        return True  # 试用中，允许进入
+
+    # 一机一码版（macOS 正式版）
+    if IS_MACOS:
+        ok, msg = check_license()
+        if ok:
+            return True  # 已激活
+
+        # 未激活 → 弹出激活对话框
+        result = {'activated': False}
+
+        def _on_close():
+            result['activated'] = check_license()[0]
+            dlg.top.destroy()
+
+        dlg = LicenseDialog(root)
+        dlg.top.protocol('WM_DELETE_WINDOW', _on_close)
+        dlg.top.wait_window(dlg.top)
+
+        return result['activated']
+
+    return True
+
+
 def main():
     root = tk.Tk()
+    root.withdraw()  # 先隐藏，授权通过后再显示
 
     # Windows DPI 感知（仅 Windows）
     if IS_WINDOWS:
@@ -2743,6 +2783,13 @@ def main():
         except Exception:
             pass
 
+    # 授权检查（在创建主程序之前）
+    if not _run_license_flow(root):
+        root.destroy()
+        sys.exit()
+
+    # 授权通过 → 显示主窗口并启动
+    root.deiconify()
     ImagePickerApp(root)
     root.mainloop()
 
