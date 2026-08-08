@@ -39,7 +39,10 @@ jobs:
       - name: Create DMG
         run: |
           cd dist
-          hdiutil create -volname "拼版挑片" -srcfolder "拼版挑片.app" -ov -format UDZO ../拼版挑片.dmg
+          # 自动检测 .app 文件名（py2app 根据 CFBundleDisplayName 生成）
+          APP_NAME=$(ls -d *.app | head -1 | sed 's/\.app$//')
+          echo "Detected app: $APP_NAME"
+          hdiutil create -volname "拼版挑片" -srcfolder "${APP_NAME}.app" -ov -format UDZO ../拼版挑片.dmg
           cd ..
 
       - name: Upload artifact
