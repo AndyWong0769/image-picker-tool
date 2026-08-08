@@ -33,11 +33,20 @@ import base64
 import hashlib
 import threading
 import subprocess
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-from datetime import datetime
-from pathlib import Path
-from collections import defaultdict
+
+# ── 最早期的错误捕获（import 阶段） ──
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, scrolledtext
+    from datetime import datetime
+    from pathlib import Path
+    from collections import defaultdict
+except Exception as _e:
+    import traceback
+    _log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_crash.log')
+    with open(_log_path, 'w', encoding='utf-8') as _f:
+        _f.write(f"Import crash: {_e}\n\n{traceback.format_exc()}")
+    raise
 
 
 # ============================================================
@@ -2818,13 +2827,20 @@ def main():
     root.mainloop()
 
 
+def _early_crash_log(msg):
+    """最早期的崩溃日志（尽可能早地写入）"""
+    try:
+        log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_crash.log')
+        import traceback
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"{msg}\n\n{traceback.format_exc()}")
+    except Exception:
+        pass
+
+
 if __name__ == '__main__':
     try:
         main()
     except Exception as e:
-        import traceback
-        log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_crash.log')
-        with open(log_path, 'w', encoding='utf-8') as f:
-            f.write(f"Crash: {e}\n\n")
-            f.write(traceback.format_exc())
+        _early_crash_log(f"Main crash: {e}")
         raise
