@@ -947,6 +947,10 @@ class ImagePickerApp:
             self._add_trial_banner()
             self.root.after(500, self._check_trial_on_startup)
 
+        # 一机一码版：检查授权，未激活则弹出激活对话框
+        if IS_MACOS and not IS_TRIAL_BUILD and not IS_FREE_BUILD:
+            self.root.after(500, self._check_license_on_startup)
+
     def _setup_styles(self):
         s = ttk.Style()
         s.theme_use('default')
