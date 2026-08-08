@@ -1,0 +1,53 @@
+name: Build macOS DMG (Trial - 免激活版)
+
+on:
+  push:
+    tags:
+      - 'trial*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15  # Apple Silicon (macos-13 Intel 已于2025年12月退役)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python (x86_64 for Rosetta cross-compile)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'  # x86_64 Python，兼容所有 Mac + 虚拟机
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          arch -x86_64 pip install py2app pillow
+
+      - name: Set trial mode in source
+        run: |
+          sed -i '' 's/^IS_TRIAL_BUILD = False/IS_TRIAL_BUILD = True/' 图片编号挑选工具macos.py
+          grep "IS_TRIAL_BUILD" 图片编号挑选工具macos.py  # 确认修改成功
+
+      - name: Build macOS app (Trial - 免激活)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '10.15'  # 最低支持 macOS 10.15 Catalina
+        run: |
+          arch -x86_64 python setup.py py2app
+
+      - name: Create DMG
+        run: |
+          cd dist
+          # 自动检测 .app 文件名（py2app 可能根据 CFBundleDisplayName 生成不同名称）
+          APP_NAME=$(ls -d *.app | head -1 | sed 's/\.app$//')
+          echo "Detected app: $APP_NAME"
+          hdiutil create -volname "图片编号挑选工具-试用版" -srcfolder "${APP_NAME}.app" -ov -format UDZO "../图片编号挑选工具-试用版.dmg"
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 图片编号挑选工具-试用版-macos
+          path: 图片编号挑选工具-试用版.dmg
+          retention-days: 30
