@@ -2754,8 +2754,22 @@ def _check_license_status():
     return True, 'ok', ''
 
 
+def _log(msg):
+    """写入桌面日志文件（调试用）"""
+    try:
+        log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_debug.log')
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"{msg}\n")
+    except Exception:
+        pass
+
+
 def main():
+    _log("=== main() start ===")
+    _log(f"IS_MACOS={IS_MACOS}, IS_TRIAL_BUILD={IS_TRIAL_BUILD}, IS_FREE_BUILD={IS_FREE_BUILD}")
+
     root = tk.Tk()
+    _log("tk.Tk() created")
 
     # Windows DPI 感知（仅 Windows）
     if IS_WINDOWS:
@@ -2767,15 +2781,20 @@ def main():
 
     # 授权检查（在创建主程序之前）
     if IS_MACOS:
+        _log("macOS: checking license...")
         ok, status, msg = _check_license_status()
+        _log(f"license check: ok={ok}, status={status}, msg={msg}")
+
         if not ok:
             if status == 'trial_expired':
+                _log("trial expired, showing error")
                 # 试用过期 → 弹窗并退出
-                root.withdraw()
-                messagebox.showerror("试用到期", msg + "\n请联系开发者购买正式版。")
+                messagebox.showerror("试用到期", msg + "\n请联系开发者购买正式版。",
+                                     parent=root)
                 root.destroy()
                 sys.exit()
             elif status == 'not_activated':
+                _log("not activated, showing license dialog")
                 # 未激活 → 弹出激活对话框
                 result = {'activated': False}
 
@@ -2792,10 +2811,20 @@ def main():
                     root.destroy()
                     sys.exit()
 
+    _log("license OK, creating ImagePickerApp")
     # 授权通过 → 启动主程序
     ImagePickerApp(root)
+    _log("starting mainloop")
     root.mainloop()
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        log_path = os.path.join(os.path.expanduser('~'), 'Desktop', 'image_picker_crash.log')
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"Crash: {e}\n\n")
+            f.write(traceback.format_exc())
+        raise
