@@ -18,7 +18,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          architecture: 'arm64'
+          architecture: 'x86_64'
 
       - name: Install dependencies
         run: |
@@ -30,7 +30,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
           cd jpg-find-raw
-          python setup.py py2app
+          arch -x86_64 python setup.py py2app
 
       - name: Create DMG
         run: |
