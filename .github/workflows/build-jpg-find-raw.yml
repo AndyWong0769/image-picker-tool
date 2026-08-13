@@ -1,0 +1,49 @@
+name: Build JPG查找RAW macOS DMG
+
+on:
+  push:
+    tags:
+      - 'jpg*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'arm64'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install py2app pillow
+
+      - name: Build macOS app
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          cd jpg-find-raw
+          python setup.py py2app
+
+      - name: Create DMG
+        run: |
+          cd jpg-find-raw/dist
+          APP_NAME=$(ls -d *.app | head -1 | sed 's/\.app$//')
+          echo "Detected app: $APP_NAME"
+          hdiutil create -volname "JPG查找RAW" -srcfolder "${APP_NAME}.app" -ov -format UDZO ../JPG查找RAW.dmg
+          cd ..
+          mv JPG查找RAW.dmg ../
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JPG查找RAW-macos
+          path: JPG查找RAW.dmg
+          retention-days: 30
