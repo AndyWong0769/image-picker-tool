@@ -22,7 +22,7 @@ OPTIONS = {
     'iconfile': 'logo.icns',
 
     # 支持 Apple Silicon 和 Intel
-    'arch': 'arm64',
+    'arch': 'x86_64',
 
     'plist': {
         'CFBundleName': 'JPG查找RAW',
@@ -38,7 +38,7 @@ OPTIONS = {
         'CFBundleGetInfoString': 'JPG查找RAW v2.0 — JPG查找RAW工具',
 
         # 最低 macOS 11.0 (Big Sur)
-        'LSMinimumSystemVersion': '11.0',
+        'LSMinimumSystemVersion': '10.15',
 
         # 高分辨率支持
         'NSHighResolutionCapable': True,
