@@ -33,7 +33,7 @@ from tkinter import ttk, filedialog, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -492,8 +492,7 @@ class FindRawApp:
     def __init__(self, root):
         self.root = root
         self.root.title("JPG Match RAW")
-        self.root.geometry("950x820")
-        self.root.minsize(850, 650)
+        self._fit_window_to_screen()
         self.root.configure(bg=self.BG)
 
         self.jpg_folders = []
@@ -522,6 +521,23 @@ class FindRawApp:
 
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
         self.root.after(50, self._drain_ui_queue)
+
+    def _fit_window_to_screen(self):
+        """Size and center the window so it fits the usable screen area
+        (small laptop screens, Dock, menu bar), instead of a fixed 950x820."""
+        try:
+            sw = self.root.winfo_screenwidth()
+            sh = self.root.winfo_screenheight()
+        except tk.TclError:
+            sw, sh = 1280, 800
+        # leave room for the macOS menu bar + Dock / Windows taskbar
+        reserve_h = 160 if _IS_MACOS else 100
+        w = max(640, min(950, sw - 60))
+        h = max(480, min(820, sh - reserve_h))
+        x = max(0, (sw - w) // 2)
+        y = max(25 if _IS_MACOS else 0, (sh - reserve_h - h) // 2 + (25 if _IS_MACOS else 0))
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        self.root.minsize(min(720, w), min(520, h))
 
     # ── Thread-safe UI dispatch ──
     def _post(self, fn, *args):
@@ -730,6 +746,12 @@ class FindRawApp:
         self.stats_label.pack(side=tk.RIGHT)
 
         # ── Results table ──
+        # Bottom area (progress + export button) is packed before the table with
+        # side=BOTTOM, so on small screens the table shrinks instead of the
+        # export button being pushed out of the window.
+        bottom_area = tk.Frame(main_frame, bg=bg)
+        bottom_area.pack(side=tk.BOTTOM, fill=tk.X)
+
         tree_frame = tk.Frame(main_frame, bg=bg)
         tree_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
 
@@ -760,7 +782,7 @@ class FindRawApp:
 
         columns = ('checked', 'jpg', 'raw', 'method')
         self.tree = ttk.Treeview(tree_frame, columns=columns, show='headings',
-                                 selectmode='extended', style="Dark.Treeview")
+                                 selectmode='extended', style="Dark.Treeview", height=4)
         self.tree.heading('checked', text='Select')
         self.tree.heading('jpg', text='JPG File')
         self.tree.heading('raw', text='RAW File')
@@ -793,12 +815,12 @@ class FindRawApp:
         style.configure('Green.Horizontal.TProgressbar',
                         background=self.SUCCESS, troughcolor='#1a1a24',
                         borderwidth=0, thickness=4)
-        self.progress = ttk.Progressbar(main_frame, mode='determinate',
+        self.progress = ttk.Progressbar(bottom_area, mode='determinate',
                                         style='Green.Horizontal.TProgressbar')
 
         # Bottom row
-        bottom_row = tk.Frame(main_frame, bg=bg)
-        bottom_row.pack(fill=tk.X, pady=(10, 0))
+        bottom_row = tk.Frame(bottom_area, bg=bg)
+        bottom_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
 
         left_frame = tk.Frame(bottom_row, bg=bg)
         left_frame.pack(side=tk.LEFT)
@@ -947,7 +969,6 @@ class FindRawApp:
     def _open_settings(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Settings")
-        dlg.geometry("480x620")
         dlg.resizable(False, False)
         dlg.configure(bg=self.BG)
         dlg.transient(self.root)
@@ -1046,10 +1067,15 @@ class FindRawApp:
         self._accent_button(btn_row, "Save", save_and_close,
                             font=F(9, True), padx=16, pady=6).pack(side=tk.RIGHT)
 
+        # Size to content (fonts differ per platform), capped to the screen
         dlg.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - dlg.winfo_width()) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        sh = dlg.winfo_screenheight()
+        w = max(480, dlg.winfo_reqwidth())
+        h = min(dlg.winfo_reqheight(), sh - 80)
+        x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
+        y = max(25, min(y, sh - h - 40))
+        dlg.geometry(f"{w}x{h}+{max(x, 0)}+{y}")
         try:
             dlg.wait_visibility()
             dlg.grab_set()
@@ -1344,7 +1370,7 @@ class FindRawApp:
         self._set_busy(True)
         self.progress['maximum'] = len(tasks)
         self.progress['value'] = 0
-        self.progress.pack(fill=tk.X, pady=(4, 0))
+        self.progress.pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
         self.status_label.config(text=f"Exporting {len(tasks)} file(s)...")
 
         COPY_WORKERS = 4
