@@ -1,0 +1,1470 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+JPG Match RAW (JpgFindRaw) - English edition for macOS / Windows
+================================================================
+Features:
+  - Select multiple JPG folders and RAW folders for matching
+  - Supports filename matching and EXIF timestamp matching
+  - If output directory is empty, exports to a 'raw' subfolder under each JPG directory
+
+v2.1 (macOS stability release):
+  - All UI updates from background threads go through a queue drained on the
+    main thread (Tk on macOS is not thread-safe -> random crashes)
+  - Background errors (e.g. external drive disconnected / no permission) are
+    reported instead of silently leaving the UI stuck
+  - Config stored in ~/Library/Application Support (never inside the .app)
+  - macOS: open files via Finder, right-click menus, readable flat buttons
+  - Pure-Python EXIF reader (no Pillow dependency)
+"""
+
+import os
+import re
+import sys
+import json
+import queue
+import shutil
+import struct
+import subprocess
+import threading
+import traceback
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+APP_NAME = "JpgFindRaw"
+APP_VERSION = "2.1.0"
+
+_IS_MACOS = sys.platform == 'darwin'
+_IS_WINDOWS = sys.platform.startswith('win')
+
+
+# ============================================================
+# Platform helpers
+# ============================================================
+
+def _get_config_path():
+    """Per-user config file (writable, outside the app bundle)."""
+    if _IS_MACOS:
+        base = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', APP_NAME)
+    elif _IS_WINDOWS:
+        base = os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), APP_NAME)
+    else:
+        base = os.path.join(os.path.expanduser('~'), '.config', APP_NAME)
+    try:
+        os.makedirs(base, exist_ok=True)
+    except Exception:
+        base = os.path.expanduser('~')
+    return os.path.join(base, 'config.json')
+
+
+_CONFIG_PATH = _get_config_path()
+
+if _IS_MACOS:
+    _UI_FAMILY = "Helvetica Neue"
+    _MONO_FAMILY = "Menlo"
+    _FONT_DELTA = 3          # macOS renders Tk point sizes smaller
+else:
+    _UI_FAMILY = "Segoe UI"
+    _MONO_FAMILY = "Consolas"
+    _FONT_DELTA = 0
+
+
+def F(size, bold=False):
+    """UI font tuple"""
+    return (_UI_FAMILY, size + _FONT_DELTA, 'bold') if bold else (_UI_FAMILY, size + _FONT_DELTA)
+
+
+def M(size):
+    """Monospace font tuple"""
+    return (_MONO_FAMILY, size + _FONT_DELTA)
+
+
+def open_in_finder(path):
+    """Open a file/folder with the system default app (cross-platform)."""
+    if not path or not os.path.exists(path):
+        return
+    try:
+        if _IS_MACOS:
+            subprocess.Popen(["open", path])
+        elif _IS_WINDOWS:
+            os.startfile(path)  # noqa: only exists on Windows
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+# ============================================================
+# Core logic
+# ============================================================
+
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.tif', '.webp', '.heic', '.heif'}
+
+RAW_EXTENSIONS = {
+    '.cr2', '.cr3', '.nef', '.nrw', '.arw', '.srf', '.sr2',
+    '.raf', '.rw2', '.rwl', '.orf', '.pef', '.ptx', '.srw',
+    '.raw', '.r3d', '.iiq', '.3fr', '.fff', '.x3f', '.dcr',
+    '.kdc', '.mrw', '.erf', '.mef', '.mos', '.dng', '.gpr',
+    '.braw', '.ari', '.bay',
+}
+
+# System folders on external drives that should never be scanned
+_SKIP_DIRS = {'System Volume Information', 'RECYCLER', 'Network Trash Folder', 'Temporary Items'}
+
+
+def is_raw_file(filepath: str) -> bool:
+    """Check if file is a RAW file"""
+    ext = os.path.splitext(filepath)[1].lower()
+    return ext in RAW_EXTENSIONS
+
+
+def get_all_files_in_folder(folder: str) -> list:
+    """Recursively get all files in folder (unreadable sub-folders are skipped)"""
+    file_list = []
+    if not folder or not os.path.isdir(folder):
+        return file_list
+    for root, dirs, files in os.walk(folder, onerror=lambda e: None):
+        dirs[:] = [d for d in dirs
+                   if not d.startswith('.') and not d.startswith('$') and d not in _SKIP_DIRS]
+        for file in files:
+            if not file.startswith('.') and not file.startswith('~'):
+                file_list.append(os.path.join(root, file))
+    return file_list
+
+
+def parse_filters(filter_str: str) -> list:
+    """Parse comma-separated filter keywords, return deduplicated non-empty list"""
+    if not filter_str or not filter_str.strip():
+        return []
+    filter_str = filter_str.replace('，', ',')
+    return [f.strip() for f in filter_str.split(',') if f.strip()]
+
+
+def parse_extensions(ext_str: str) -> set:
+    """Parse extension string, return set of lowercase extensions with dot prefix
+
+    Supports: .jpg / .png / .tif   jpg / png   .jpg, .png   jpg,png   JPG / PNG
+    """
+    if not ext_str or not ext_str.strip():
+        return set()
+    s = ext_str.strip().replace('，', ',').replace('/', ',')
+    result = set()
+    for part in s.split(','):
+        part = part.strip().lower()
+        if not part:
+            continue
+        if not part.startswith('.'):
+            part = '.' + part
+        result.add(part)
+    return result
+
+
+def extract_possible_raw_names(filename: str,
+                               prefix_filters: list = None, suffix_filters: list = None) -> list:
+    """Extract possible RAW filename patterns from a JPG filename"""
+    name_without_ext = os.path.splitext(filename)[0]
+
+    if prefix_filters or suffix_filters:
+        for pf in (prefix_filters or []):
+            if name_without_ext.startswith(pf):
+                name_without_ext = name_without_ext[len(pf):]
+        for sf in (suffix_filters or []):
+            if name_without_ext.endswith(sf):
+                name_without_ext = name_without_ext[:-len(sf)]
+
+    number_patterns = re.findall(r'\d{3,}', name_without_ext)
+    candidates = set()
+    candidates.add(name_without_ext.lower())
+    all_patterns = re.findall(r'[a-zA-Z0-9_]{2,}', name_without_ext)
+    for p in all_patterns:
+        candidates.add(p.lower())
+    for p in number_patterns:
+        candidates.add(p.lower())
+    return list(candidates)
+
+
+def match_jpg_to_raw(jpg_files: list, raw_files: list, settings: dict = None) -> list:
+    """Match JPG files to RAW files by filename"""
+    jpg_prefix = parse_filters(settings.get('jpg_prefix_filters', '')) if settings else []
+    jpg_suffix = parse_filters(settings.get('jpg_suffix_filters', '')) if settings else []
+
+    raw_dict = {}
+    for f in raw_files:
+        raw_stem = os.path.splitext(os.path.basename(f))[0]
+        raw_dict[raw_stem.lower()] = f
+
+    results = []
+    for jpg_path in jpg_files:
+        jpg_filename = os.path.basename(jpg_path)
+        filtered_jpg_stem = os.path.splitext(jpg_filename)[0]
+        for pf in jpg_prefix:
+            if filtered_jpg_stem.startswith(pf):
+                filtered_jpg_stem = filtered_jpg_stem[len(pf):]
+        for sf in jpg_suffix:
+            if filtered_jpg_stem.endswith(sf):
+                filtered_jpg_stem = filtered_jpg_stem[:-len(sf)]
+
+        found_raw = None
+        method = None
+
+        # 1. Exact match (using filtered stem)
+        if filtered_jpg_stem.lower() in raw_dict:
+            found_raw = raw_dict[filtered_jpg_stem.lower()]
+            method = 'Filename'
+
+        # 2. Candidate match (longest candidate first = most specific)
+        if not found_raw:
+            candidates = extract_possible_raw_names(jpg_filename, jpg_prefix, jpg_suffix)
+            for cand in sorted(candidates, key=len, reverse=True):
+                if cand in raw_dict:
+                    found_raw = raw_dict[cand]
+                    method = 'Filename'
+                    break
+
+        results.append({
+            'jpg_path': jpg_path,
+            'jpg_name': jpg_filename,
+            'raw_path': found_raw,
+            'raw_name': os.path.basename(found_raw) if found_raw else None,
+            'method': method
+        })
+
+    return results
+
+
+# ── EXIF (pure Python, no Pillow) ──
+
+_EXIF_DATE_TAGS = (36867, 36868, 306)   # DateTimeOriginal, DateTimeDigitized, DateTime
+_DATE_RE = re.compile(rb'(?:19|20)\d{2}:\d{2}:\d{2} \d{2}:\d{2}:\d{2}')
+
+
+def _tiff_datetime(buf: bytes, base: int):
+    """Read EXIF datetime from a TIFF structure starting at buf[base]."""
+    try:
+        order = buf[base:base + 2]
+        if order == b'II':
+            e = '<'
+        elif order == b'MM':
+            e = '>'
+        else:
+            return None
+
+        def u16(o):
+            return struct.unpack_from(e + 'H', buf, base + o)[0]
+
+        def u32(o):
+            return struct.unpack_from(e + 'I', buf, base + o)[0]
+
+        def read_ifd(off):
+            tags = {}
+            if off <= 0 or base + off + 2 > len(buf):
+                return tags
+            n = u16(off)
+            if n > 1000:
+                return tags
+            for i in range(n):
+                p = off + 2 + i * 12
+                if base + p + 12 > len(buf):
+                    break
+                tag, typ, cnt = u16(p), u16(p + 2), u32(p + 4)
+                tags[tag] = (typ, cnt, p + 8)
+            return tags
+
+        def ascii_val(entry):
+            typ, cnt, p = entry
+            if typ != 2 or cnt == 0:
+                return None
+            off = p if cnt <= 4 else u32(p)
+            raw = buf[base + off: base + off + cnt]
+            m = _DATE_RE.search(raw)
+            return m.group(0).decode('ascii') if m else None
+
+        ifd0 = read_ifd(u32(4))
+        found = {}
+        if 306 in ifd0:
+            found[306] = ascii_val(ifd0[306])
+        if 34665 in ifd0:  # Exif sub-IFD pointer
+            exif = read_ifd(u32(ifd0[34665][2]))
+            for t in (36867, 36868):
+                if t in exif:
+                    found[t] = ascii_val(exif[t])
+        for t in _EXIF_DATE_TAGS:
+            if found.get(t):
+                return found[t]
+    except Exception:
+        pass
+    return None
+
+
+def _jpeg_datetime(buf: bytes):
+    """Find the EXIF APP1 segment in JPEG data and read its datetime."""
+    if buf[:2] != b'\xff\xd8':
+        return None
+    i = 2
+    while i + 4 <= len(buf):
+        if buf[i] != 0xFF:
+            return None
+        marker = buf[i + 1]
+        if marker in (0xD9, 0xDA):        # EOI / start of scan
+            return None
+        seg_len = struct.unpack_from('>H', buf, i + 2)[0]
+        if marker == 0xE1 and buf[i + 4:i + 10] == b'Exif\x00\x00':
+            return _tiff_datetime(buf, i + 10)
+        i += 2 + seg_len
+    return None
+
+
+def read_exif_datetime(filepath: str) -> str:
+    """Read capture datetime ('YYYY:MM:DD HH:MM:SS') from JPG or RAW, or None"""
+    try:
+        with open(filepath, 'rb') as f:
+            head = f.read(262144)
+    except Exception:
+        return None
+
+    dt = None
+    if head[:2] == b'\xff\xd8':
+        dt = _jpeg_datetime(head)
+    elif head[:2] in (b'II', b'MM'):   # TIFF-based RAW: CR2, NEF, ARW, DNG, ORF, RW2, PEF...
+        dt = _tiff_datetime(head, 0)
+    if dt:
+        return dt
+
+    # Fallback (CR3, RAF, others): first timestamp-looking string in the first 1 MB
+    try:
+        with open(filepath, 'rb') as f:
+            data = f.read(1048576)
+        m = _DATE_RE.search(data)
+        if m:
+            return m.group(0).decode('ascii', errors='ignore')
+    except Exception:
+        pass
+    return None
+
+
+def match_by_exif(unmatched_results: list, all_raw_files: list, progress_cb=None) -> list:
+    """Match unmatched JPGs by EXIF datetime; each RAW assigned to at most one JPG"""
+    if not unmatched_results:
+        return unmatched_results
+
+    raw_by_time = {}
+    total = len(all_raw_files)
+    for i, raw_path in enumerate(all_raw_files):
+        dt = read_exif_datetime(raw_path)
+        if dt:
+            raw_by_time.setdefault(dt, []).append(raw_path)
+        if progress_cb and ((i + 1) % 10 == 0 or i + 1 == total):
+            progress_cb(i + 1, total)
+
+    used_raw = set()
+    updated = []
+    for result in unmatched_results:
+        if result['raw_path']:
+            updated.append(result)
+            continue
+        dt = read_exif_datetime(result['jpg_path'])
+        if dt and dt in raw_by_time:
+            for raw_path in raw_by_time[dt]:
+                if raw_path not in used_raw:
+                    result = dict(result)
+                    result['raw_path'] = raw_path
+                    result['raw_name'] = os.path.basename(raw_path)
+                    result['method'] = 'EXIF'
+                    used_raw.add(raw_path)
+                    break
+        updated.append(result)
+
+    return updated
+
+
+# ============================================================
+# Widgets
+# ============================================================
+
+class FlatButton(tk.Label):
+    """Flat colored button.
+
+    tk.Button ignores background colors on macOS (Aqua), which made the
+    light button text unreadable. A Label-based button looks identical on
+    macOS and Windows.
+    """
+
+    def __init__(self, parent, text, command, bg, fg, hover_bg=None, hover_fg=None,
+                 disabled_bg=None, disabled_fg=None, font=None, padx=10, pady=4, width=None):
+        kw = dict(text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady, cursor="hand2")
+        if width:
+            kw['width'] = width
+        super().__init__(parent, **kw)
+        self._command = command
+        self._bg, self._fg = bg, fg
+        self._hover_bg = hover_bg or bg
+        self._hover_fg = hover_fg or fg
+        self._disabled_bg = disabled_bg or bg
+        self._disabled_fg = disabled_fg or '#5a5a70'
+        self._enabled = True
+        self._hover = False
+        self.bind('<Enter>', self._on_enter)
+        self.bind('<Leave>', self._on_leave)
+        self.bind('<ButtonRelease-1>', self._on_click)
+
+    def _paint(self):
+        if not self._enabled:
+            super().configure(bg=self._disabled_bg, fg=self._disabled_fg, cursor="arrow")
+        elif self._hover:
+            super().configure(bg=self._hover_bg, fg=self._hover_fg, cursor="hand2")
+        else:
+            super().configure(bg=self._bg, fg=self._fg, cursor="hand2")
+
+    def _on_enter(self, _e):
+        self._hover = True
+        self._paint()
+
+    def _on_leave(self, _e):
+        self._hover = False
+        self._paint()
+
+    def _on_click(self, e):
+        if not self._enabled or not self._command:
+            return
+        # only fire if the mouse is still over the button
+        if 0 <= e.x <= self.winfo_width() and 0 <= e.y <= self.winfo_height():
+            self._command()
+
+    def set_enabled(self, enabled: bool):
+        self._enabled = bool(enabled)
+        self._paint()
+
+    def is_enabled(self):
+        return self._enabled
+
+
+class ToolTip:
+    """Simple tooltip that shows on hover"""
+    def __init__(self, widget, text, bg="#2a2a3c", fg="#e4e4ed", font=None):
+        self.widget = widget
+        self.text = text
+        self.bg = bg
+        self.fg = fg
+        self.font = font or F(9)
+        self.tip_window = None
+        widget.bind('<Enter>', self.show, add='+')
+        widget.bind('<Leave>', self.hide, add='+')
+
+    def show(self, event=None):
+        if self.tip_window:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        frame = tk.Frame(tw, bg=self.bg, highlightbackground="#6c8aff",
+                         highlightthickness=1, padx=10, pady=8)
+        frame.pack()
+        tk.Label(frame, text=self.text, bg=self.bg, fg=self.fg,
+                 font=self.font, justify=tk.LEFT).pack()
+
+    def hide(self, event=None):
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
+# ============================================================
+# GUI
+# ============================================================
+
+class FindRawApp:
+    """JPG Match RAW application"""
+
+    BG = "#1e1e2e"
+    SURFACE = "#2a2a3c"
+    BORDER = "#3a3a4e"
+    INK = "#e4e4ed"
+    ASH = "#9090a8"
+    ACCENT = "#6c8aff"
+    ACCENT_HOVER = "#8098ff"
+    SUCCESS = "#5acb84"
+    ERROR = "#ff6b6b"
+    WARN = "#f0c674"
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("JPG Match RAW")
+        self.root.geometry("950x820")
+        self.root.minsize(850, 650)
+        self.root.configure(bg=self.BG)
+
+        self.jpg_folders = []
+        self.raw_folders = []
+        self.results = []
+        self.selected_rows = set()
+        self._busy = False          # a match/export job is running
+        self._quiet = False         # self-test mode: no modal dialogs
+        self._last_export = None    # (count, failed, folders) of the last export
+
+        self.settings = {
+            'create_raw_folder': True,
+            'export_method': 'copy',
+            'jpg_extensions': '',
+            'raw_extensions': '',
+            'jpg_prefix_filters': '',
+            'jpg_suffix_filters': '',
+        }
+
+        # Thread -> UI message queue. Background threads must NEVER touch Tk
+        # directly (that crashes Tk on macOS); they call self._post() instead.
+        self._ui_queue = queue.Queue()
+
+        self._load_config()
+        self._build_ui()
+
+        self.root.protocol('WM_DELETE_WINDOW', self._on_close)
+        self.root.after(50, self._drain_ui_queue)
+
+    # ── Thread-safe UI dispatch ──
+    def _post(self, fn, *args):
+        """Schedule fn(*args) on the Tk main thread (safe from any thread)."""
+        self._ui_queue.put((fn, args))
+
+    def _drain_ui_queue(self):
+        try:
+            for _ in range(1000):
+                fn, args = self._ui_queue.get_nowait()
+                try:
+                    fn(*args)
+                except Exception:
+                    traceback.print_exc()
+        except queue.Empty:
+            pass
+        try:
+            self.root.after(50, self._drain_ui_queue)
+        except tk.TclError:
+            pass  # window closed
+
+    def _show_info(self, title, msg):
+        if not self._quiet:
+            messagebox.showinfo(title, msg, parent=self.root)
+
+    def _show_error(self, title, msg):
+        if self._quiet:
+            print(f"[{title}] {msg}", file=sys.stderr)
+        else:
+            messagebox.showerror(title, msg, parent=self.root)
+
+    def _get_formats_tooltip_text(self):
+        jpg_defaults = ['.jpg', '.jpeg', '.png']
+        raw_defaults = sorted(RAW_EXTENSIONS)
+        mid = len(raw_defaults) // 2
+        lines = [
+            "Default Supported Formats", "",
+            "JPG formats:", "  " + ", ".join(jpg_defaults), "",
+            "RAW formats:",
+            "  " + ", ".join(raw_defaults[:mid]),
+            "  " + ", ".join(raw_defaults[mid:]),
+        ]
+        return "\n".join(lines)
+
+    def _make_info_icon(self, parent, tooltip_text):
+        size = 16
+        btn = tk.Canvas(parent, width=size, height=size, bg=self.BG,
+                        highlightthickness=0, relief="flat", bd=0)
+
+        def draw_icon(fg_color):
+            btn.delete("all")
+            btn.create_oval(2, 2, size - 2, size - 2, outline=fg_color, width=1.5)
+            btn.create_oval(size // 2 - 1.5, 4.5, size // 2 + 1.5, 7.5, fill=fg_color, outline="")
+            btn.create_line(size // 2, 9, size // 2, 12, fill=fg_color, width=1.5)
+
+        draw_icon(self.ASH)
+        btn.bind('<Enter>', lambda e: draw_icon(self.ACCENT))
+        btn.bind('<Leave>', lambda e: draw_icon(self.ASH))
+        ToolTip(btn, tooltip_text, bg=self.SURFACE, fg=self.INK)
+        return btn
+
+    def _accent_button(self, parent, text, command, **kw):
+        return FlatButton(parent, text, command, bg=self.ACCENT, fg="#ffffff",
+                          hover_bg=self.ACCENT_HOVER, disabled_bg=self.SURFACE,
+                          disabled_fg=self.ASH, **kw)
+
+    def _bind_right_click(self, widget, handler):
+        if _IS_MACOS:
+            widget.bind('<Button-2>', handler)           # right button on macOS Tk 8.6
+            widget.bind('<Control-Button-1>', handler)   # ctrl-click
+        widget.bind('<Button-3>', handler)
+
+    def _build_ui(self):
+        bg = self.BG
+        surface = self.SURFACE
+        border = self.BORDER
+        ink = self.INK
+        ash = self.ASH
+        accent = self.ACCENT
+
+        main_frame = tk.Frame(self.root, bg=bg, padx=16, pady=12)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        title_row = tk.Frame(main_frame, bg=bg)
+        title_row.pack(fill=tk.X)
+        tk.Label(title_row, text="JPG Match RAW", bg=bg, fg=accent,
+                 font=F(16, True)).pack(side=tk.LEFT)
+        tk.Label(title_row, text=f"v{APP_VERSION}", bg=bg, fg='#5a5a70',
+                 font=F(8)).pack(side=tk.LEFT, padx=(8, 0), pady=(6, 0))
+
+        tk.Label(main_frame, text="Match multiple JPG folders with RAW folders. Supports filename matching and EXIF timestamp matching.",
+                 bg=bg, fg=ash, font=F(9)).pack(anchor="w", pady=(2, 10))
+
+        folder_card = tk.Frame(main_frame, bg=surface, highlightbackground=border,
+                               highlightthickness=1, padx=12, pady=10)
+        folder_card.pack(fill=tk.X, pady=(0, 8))
+
+        # === JPG Directory ===
+        jpg_header = tk.Frame(folder_card, bg=surface)
+        jpg_header.pack(fill=tk.X)
+        tk.Label(jpg_header, text="JPG Directory", bg=surface, fg=ash,
+                 font=F(10, True)).pack(side=tk.LEFT)
+
+        jpg_btn_row = tk.Frame(jpg_header, bg=surface)
+        jpg_btn_row.pack(side=tk.RIGHT)
+
+        self.settings_btn = FlatButton(jpg_btn_row, "⚙", self._open_settings,
+                                       bg=surface, fg=ash, hover_fg=accent,
+                                       font=F(18), padx=4, pady=0)
+        self.settings_btn.pack(side=tk.LEFT, padx=(0, 6))
+
+        self.jpg_add_btn = self._accent_button(jpg_btn_row, "+ Add Folder", self._add_jpg_folder,
+                                               font=F(9, True), padx=10, pady=4)
+        self.jpg_add_btn.pack(side=tk.LEFT)
+
+        self.jpg_listbox_frame = tk.Frame(folder_card, bg='#1a1a24',
+                                          highlightbackground=border, highlightthickness=1)
+        self.jpg_listbox_frame.pack(fill=tk.X, pady=(6, 0), ipady=2)
+        self.jpg_listbox = tk.Listbox(self.jpg_listbox_frame, height=3,
+                                      bg='#1a1a24', fg='#c0c0d0', font=M(9),
+                                      selectbackground='#2a2a4a', selectforeground='#e0e0f0',
+                                      relief="flat", bd=0, highlightthickness=0,
+                                      activestyle='none')
+        self.jpg_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
+        self.jpg_listbox.bind('<Delete>', lambda e: self._remove_selected_jpg())
+        self.jpg_listbox.bind('<BackSpace>', lambda e: self._remove_selected_jpg())
+        self.jpg_listbox.bind('<Double-1>', lambda e: self._open_jpg_folder())
+        self._bind_right_click(self.jpg_listbox, self._popup_jpg_menu)
+
+        jpg_scroll = ttk.Scrollbar(self.jpg_listbox_frame, orient="vertical",
+                                   command=self.jpg_listbox.yview,
+                                   style="Dark.Vertical.TScrollbar")
+        jpg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.jpg_listbox.config(yscrollcommand=jpg_scroll.set)
+
+        # === RAW Directory ===
+        raw_header = tk.Frame(folder_card, bg=surface)
+        raw_header.pack(fill=tk.X, pady=(12, 0))
+        tk.Label(raw_header, text="RAW Directory", bg=surface, fg=ash,
+                 font=F(10, True)).pack(side=tk.LEFT)
+
+        raw_btn_row = tk.Frame(raw_header, bg=surface)
+        raw_btn_row.pack(side=tk.RIGHT)
+        self.raw_add_btn = self._accent_button(raw_btn_row, "+ Add Folder", self._add_raw_folder,
+                                               font=F(9, True), padx=10, pady=4)
+        self.raw_add_btn.pack(side=tk.RIGHT)
+
+        self.raw_listbox_frame = tk.Frame(folder_card, bg='#1a1a24',
+                                          highlightbackground=border, highlightthickness=1)
+        self.raw_listbox_frame.pack(fill=tk.X, pady=(6, 0), ipady=2)
+        self.raw_listbox = tk.Listbox(self.raw_listbox_frame, height=3,
+                                      bg='#1a1a24', fg='#c0c0d0', font=M(9),
+                                      selectbackground='#2a2a4a', selectforeground='#e0e0f0',
+                                      relief="flat", bd=0, highlightthickness=0,
+                                      activestyle='none')
+        self.raw_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
+        self.raw_listbox.bind('<Delete>', lambda e: self._remove_selected_raw())
+        self.raw_listbox.bind('<BackSpace>', lambda e: self._remove_selected_raw())
+        self.raw_listbox.bind('<Double-1>', lambda e: self._open_raw_folder())
+        self._bind_right_click(self.raw_listbox, self._popup_raw_menu)
+
+        raw_scroll = ttk.Scrollbar(self.raw_listbox_frame, orient="vertical",
+                                   command=self.raw_listbox.yview,
+                                   style="Dark.Vertical.TScrollbar")
+        raw_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.raw_listbox.config(yscrollcommand=raw_scroll.set)
+
+        # === Output Directory ===
+        out_row = tk.Frame(folder_card, bg=surface)
+        out_row.pack(fill=tk.X, pady=(12, 0))
+        tk.Label(out_row, text="Output Directory", bg=surface, fg=ash,
+                 font=F(10, True)).pack(side=tk.LEFT)
+        self.out_entry = tk.Entry(out_row, font=M(9), bg=bg, fg=ink, insertbackground=ink,
+                                  relief="flat", highlightthickness=1,
+                                  highlightbackground=border, highlightcolor=accent)
+        self.out_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 6), ipady=5)
+        self._accent_button(out_row, "Browse", self._browse_out,
+                            font=F(9, True), padx=28, pady=4).pack(side=tk.RIGHT)
+
+        self._out_placeholder = "Empty = export to 'raw' subfolder under JPG directory"
+        self.out_entry.insert(0, self._out_placeholder)
+        self.out_entry.config(fg='#5a5a70')
+        self.out_entry.bind('<FocusIn>', self._on_out_focus_in)
+        self.out_entry.bind('<FocusOut>', self._on_out_focus_out)
+
+        # ── Action buttons ──
+        btn_row = tk.Frame(main_frame, bg=bg)
+        btn_row.pack(fill=tk.X, pady=10)
+        btn_center = tk.Frame(btn_row, bg=bg)
+        btn_center.pack(side=tk.TOP)
+
+        self.match_btn = self._accent_button(btn_center, "Match by Filename", self._start_match,
+                                             font=F(10, True), width=18, pady=10)
+        self.match_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.exif_btn = self._accent_button(btn_center, "Match by EXIF", self._start_exif,
+                                            font=F(10, True), width=18, pady=10)
+        self.exif_btn.set_enabled(False)
+        self.exif_btn.pack(side=tk.LEFT)
+
+        status_row = tk.Frame(main_frame, bg=bg)
+        status_row.pack(fill=tk.X)
+        self.status_label = tk.Label(status_row, text="Ready", bg=bg, fg=ash, font=F(9))
+        self.status_label.pack(side=tk.LEFT)
+        self.stats_label = tk.Label(status_row, text="", bg=bg, fg=accent, font=F(9, True))
+        self.stats_label.pack(side=tk.RIGHT)
+
+        # ── Results table ──
+        tree_frame = tk.Frame(main_frame, bg=bg)
+        tree_frame.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
+
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure("Dark.Treeview",
+                        background='#1a1a24', foreground='#c0c0d0',
+                        fieldbackground='#1a1a24', bordercolor='#1a1a24',
+                        lightcolor='#1a1a24', darkcolor='#1a1a24', borderwidth=0,
+                        font=F(9), rowheight=22 + _FONT_DELTA * 2)
+        style.layout('Dark.Treeview', [('Dark.Treeview.treearea', {'sticky': 'nswe'})])
+        style.configure("Dark.Treeview.Heading",
+                        background='#6c8aff', foreground='#ffffff',
+                        bordercolor='#1a1a24', lightcolor='#6c8aff', darkcolor='#6c8aff',
+                        relief='flat', font=F(9, True), padding=(6, 4))
+        style.map("Dark.Treeview.Heading",
+                  background=[('active', '#8098ff'), ('!active', '#6c8aff')],
+                  foreground=[('active', '#ffffff'), ('!active', '#ffffff')])
+        style.map("Dark.Treeview",
+                  background=[('selected', '#2a2a4a')],
+                  foreground=[('selected', '#e0e0f0')])
+        style.configure("Dark.Vertical.TScrollbar",
+                        background='#252535', troughcolor='#1a1a24',
+                        borderwidth=0, arrowcolor='#6c8aff', gripcount=0)
+        style.map("Dark.Vertical.TScrollbar",
+                  background=[('active', '#3a3a4e'), ('!active', '#252535')],
+                  troughcolor=[('active', '#1a1a24'), ('!active', '#1a1a24')])
+
+        columns = ('checked', 'jpg', 'raw', 'method')
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show='headings',
+                                 selectmode='extended', style="Dark.Treeview")
+        self.tree.heading('checked', text='Select')
+        self.tree.heading('jpg', text='JPG File')
+        self.tree.heading('raw', text='RAW File')
+        self.tree.heading('method', text='Method')
+        self.tree.column('checked', width=60, anchor='center', stretch=False)
+        self.tree.column('jpg', width=200)
+        self.tree.column('raw', width=350, minwidth=200, stretch=True)
+        self.tree.column('method', width=100, anchor='center', stretch=False)
+
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview,
+                            style="Dark.Vertical.TScrollbar")
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.tree.bind('<ButtonRelease-1>', self._on_tree_click)
+        self.tree.bind('<Double-1>', self._on_tree_double_click)
+        if _IS_MACOS:
+            # macOS delivers small deltas (1, 2, 3...) per wheel step
+            self.tree.bind('<MouseWheel>',
+                           lambda e: (self.tree.yview_scroll(-e.delta, 'units'), 'break')[1])
+        else:
+            self.tree.bind('<MouseWheel>',
+                           lambda e: (self.tree.yview_scroll(int(-1 * (e.delta / 120)) or
+                                                            (-1 if e.delta > 0 else 1), 'units'),
+                                      'break')[1])
+            self.tree.bind('<Button-4>', lambda e: self.tree.yview_scroll(-1, 'units'))
+            self.tree.bind('<Button-5>', lambda e: self.tree.yview_scroll(1, 'units'))
+
+        style.configure('Green.Horizontal.TProgressbar',
+                        background=self.SUCCESS, troughcolor='#1a1a24',
+                        borderwidth=0, thickness=4)
+        self.progress = ttk.Progressbar(main_frame, mode='determinate',
+                                        style='Green.Horizontal.TProgressbar')
+
+        # Bottom row
+        bottom_row = tk.Frame(main_frame, bg=bg)
+        bottom_row.pack(fill=tk.X, pady=(10, 0))
+
+        left_frame = tk.Frame(bottom_row, bg=bg)
+        left_frame.pack(side=tk.LEFT)
+        self.matched_label = tk.Label(left_frame, text="0 matched", bg=bg,
+                                      fg=self.SUCCESS, font=F(9, True))
+        self.matched_label.pack(side=tk.LEFT)
+        self.unmatched_label = tk.Label(left_frame, text="0 unmatched", bg=bg,
+                                        fg=self.ERROR, font=F(9, True))
+        self.unmatched_label.pack(side=tk.LEFT, padx=(12, 0))
+
+        self.export_btn = self._accent_button(bottom_row, "Export Selected RAW", self._export_selected,
+                                              font=F(10, True), padx=20, pady=10)
+        self.export_btn.pack(side=tk.LEFT, expand=True)
+
+        right_frame = tk.Frame(bottom_row, bg=bg, width=160)
+        right_frame.pack(side=tk.RIGHT)
+        right_frame.pack_propagate(False)
+
+        self.root.after(100, self._refresh_both_lists)
+
+    def _refresh_both_lists(self):
+        self._refresh_jpg_list()
+        self._refresh_raw_list()
+
+    def _set_busy(self, busy: bool):
+        """Enable/disable the action buttons while a job runs."""
+        self._busy = busy
+        for b in (self.match_btn, self.export_btn, self.jpg_add_btn, self.raw_add_btn):
+            b.set_enabled(not busy)
+        has_unmatched = any(not r['raw_path'] for r in self.results)
+        self.exif_btn.set_enabled((not busy) and has_unmatched)
+
+    # ── Folder management ──
+    def _ask_folder(self, title):
+        try:
+            return filedialog.askdirectory(title=title, parent=self.root, mustexist=True)
+        except Exception:
+            return ''
+
+    def _add_jpg_folder(self):
+        d = self._ask_folder("Add JPG Folder")
+        if d and d not in self.jpg_folders:
+            self.jpg_folders.append(d)
+            self._refresh_jpg_list()
+            self._save_config(show_error=False)
+
+    def _add_raw_folder(self):
+        d = self._ask_folder("Add RAW Folder")
+        if d and d not in self.raw_folders:
+            self.raw_folders.append(d)
+            self._refresh_raw_list()
+            self._save_config(show_error=False)
+
+    def _browse_out(self):
+        d = self._ask_folder("Select Output Directory")
+        if d:
+            self.out_entry.delete(0, tk.END)
+            self.out_entry.insert(0, d)
+            self.out_entry.config(fg=self.INK)
+
+    def _open_jpg_folder(self):
+        sel = self.jpg_listbox.curselection()
+        if sel:
+            open_in_finder(self.jpg_listbox.get(sel[0]))
+
+    def _open_raw_folder(self):
+        sel = self.raw_listbox.curselection()
+        if sel:
+            open_in_finder(self.raw_listbox.get(sel[0]))
+
+    def _popup_menu(self, listbox, event, open_cmd, remove_cmd):
+        if listbox.size() == 0:
+            return
+        sel = listbox.nearest(event.y)
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(sel)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Show in Finder" if _IS_MACOS else "Open Folder", command=open_cmd)
+        menu.add_command(label="Remove Path", command=remove_cmd)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _popup_jpg_menu(self, event):
+        self._popup_menu(self.jpg_listbox, event, self._open_jpg_folder, self._remove_selected_jpg)
+
+    def _popup_raw_menu(self, event):
+        self._popup_menu(self.raw_listbox, event, self._open_raw_folder, self._remove_selected_raw)
+
+    def _refresh_jpg_list(self):
+        self.jpg_listbox.delete(0, tk.END)
+        for folder in self.jpg_folders:
+            self.jpg_listbox.insert(tk.END, folder)
+
+    def _refresh_raw_list(self):
+        self.raw_listbox.delete(0, tk.END)
+        for folder in self.raw_folders:
+            self.raw_listbox.insert(tk.END, folder)
+
+    def _remove_selected_jpg(self):
+        sel = self.jpg_listbox.curselection()
+        if sel and 0 <= sel[0] < len(self.jpg_folders):
+            self.jpg_folders.pop(sel[0])
+            self._refresh_jpg_list()
+
+    def _remove_selected_raw(self):
+        sel = self.raw_listbox.curselection()
+        if sel and 0 <= sel[0] < len(self.raw_folders):
+            self.raw_folders.pop(sel[0])
+            self._refresh_raw_list()
+
+    # ── Config persistence ──
+    def _load_config(self):
+        try:
+            if os.path.exists(_CONFIG_PATH):
+                with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                # Only load folders that still exist (external drive may be unplugged)
+                self.jpg_folders = [p for p in data.get('jpg_folders', []) if os.path.isdir(p)]
+                self.raw_folders = [p for p in data.get('raw_folders', []) if os.path.isdir(p)]
+                s = data.get('settings', {})
+                for k in self.settings:
+                    if k in s:
+                        self.settings[k] = s[k]
+        except Exception:
+            pass
+
+    def _save_config(self, show_error=True):
+        try:
+            data = {
+                'jpg_folders': self.jpg_folders,
+                'raw_folders': self.raw_folders,
+                'settings': self.settings,
+            }
+            tmp = _CONFIG_PATH + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, _CONFIG_PATH)
+            return True
+        except Exception as e:
+            if show_error:
+                self._show_error("Save Failed", f"Could not save settings to:\n{_CONFIG_PATH}\n\nError: {e}")
+            return False
+
+    def _open_settings(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Settings")
+        dlg.geometry("480x620")
+        dlg.resizable(False, False)
+        dlg.configure(bg=self.BG)
+        dlg.transient(self.root)
+
+        bg = self.BG
+        surface = self.SURFACE
+        border = self.BORDER
+        ink = self.INK
+        ash = self.ASH
+        accent = self.ACCENT
+
+        frame = tk.Frame(dlg, bg=bg, padx=16, pady=14)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        create_raw_var = tk.BooleanVar(value=self.settings.get('create_raw_folder', True))
+        tk.Checkbutton(frame, text="Create 'raw' subfolder (exports to a raw subfolder under JPG directory)",
+                       variable=create_raw_var, bg=bg, fg=ink, selectcolor=surface,
+                       activebackground=bg, activeforeground=ink, highlightthickness=0, bd=0,
+                       font=F(10), wraplength=420, justify=tk.LEFT).pack(anchor="w", pady=(0, 16))
+
+        tk.Frame(frame, bg=border, height=1).pack(fill=tk.X, pady=(0, 14))
+
+        export_row = tk.Frame(frame, bg=bg)
+        export_row.pack(fill=tk.X, pady=(0, 16))
+        tk.Label(export_row, text="Export Method:", bg=bg, fg=accent,
+                 font=F(10, True)).pack(side=tk.LEFT)
+        export_var = tk.StringVar(value=self.settings.get('export_method', 'copy'))
+        for text, val, padx in (("Copy", 'copy', (10, 20)), ("Move", 'cut', 0)):
+            tk.Radiobutton(export_row, text=text, variable=export_var, value=val,
+                           bg=bg, fg=ink, selectcolor=surface,
+                           activebackground=bg, activeforeground=ink,
+                           highlightthickness=0, bd=0, font=F(10)).pack(side=tk.LEFT, padx=padx)
+
+        tk.Frame(frame, bg=border, height=1).pack(fill=tk.X, pady=(0, 14))
+
+        ext_header_row = tk.Frame(frame, bg=bg)
+        ext_header_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Label(ext_header_row, text="Extension Settings", bg=bg, fg=accent,
+                 font=F(10, True)).pack(side=tk.LEFT)
+        self._make_info_icon(ext_header_row, self._get_formats_tooltip_text()).pack(side=tk.LEFT, padx=(6, 0))
+
+        tk.Label(frame, text="Add extra extension formats below (in addition to defaults).",
+                 bg=bg, fg='#5a5a70', font=F(8)).pack(anchor="w", pady=(0, 10))
+
+        def entry(label, key, pady_after=10):
+            tk.Label(frame, text=label, bg=bg, fg=ash, font=F(9)).pack(anchor="w")
+            e = tk.Entry(frame, font=M(9), bg=surface, fg=ink, insertbackground=ink,
+                         relief="flat", bd=0, highlightthickness=1,
+                         highlightbackground=border, highlightcolor=accent)
+            e.pack(fill=tk.X, ipady=5, pady=(2, pady_after))
+            e.insert(0, self.settings.get(key, ''))
+            return e
+
+        jpg_ext_entry = entry("JPG Directory Extensions:", 'jpg_extensions')
+        raw_ext_entry = entry("RAW Directory Extensions:", 'raw_extensions')
+
+        tk.Label(frame, text="Examples: .tif    jpg/png/tif    .jpg,.png    JPG,PNG",
+                 bg=bg, fg='#5a5a70', font=F(8)).pack(anchor="w", pady=(0, 14))
+
+        tk.Frame(frame, bg=border, height=1).pack(fill=tk.X, pady=(0, 14))
+
+        tk.Label(frame, text="JPG Filename Filters (separate multiple keywords with comma)",
+                 bg=bg, fg=accent, font=F(10, True)).pack(anchor="w", pady=(0, 10))
+
+        jpg_prefix_entry = entry("JPG Prefix Filter:", 'jpg_prefix_filters')
+        jpg_suffix_entry = entry("JPG Suffix Filter:", 'jpg_suffix_filters', pady_after=6)
+
+        tk.Label(frame, text="Example: _DSC0531.jpg enter prefix _ → DSC0531 matches DSC0531.CR2",
+                 bg=bg, fg='#5a5a70', font=F(8)).pack(anchor="w", pady=(0, 4))
+
+        btn_row = tk.Frame(frame, bg=bg)
+        btn_row.pack(fill=tk.X, pady=(14, 0))
+
+        def close():
+            try:
+                dlg.grab_release()
+            except tk.TclError:
+                pass
+            dlg.destroy()
+
+        def save_and_close():
+            self.settings['create_raw_folder'] = create_raw_var.get()
+            self.settings['export_method'] = export_var.get()
+            self.settings['jpg_extensions'] = jpg_ext_entry.get().strip()
+            self.settings['raw_extensions'] = raw_ext_entry.get().strip()
+            self.settings['jpg_prefix_filters'] = jpg_prefix_entry.get().strip()
+            self.settings['jpg_suffix_filters'] = jpg_suffix_entry.get().strip()
+            if self._save_config():
+                self.status_label.config(text="Settings saved")
+            close()
+
+        dlg.protocol('WM_DELETE_WINDOW', save_and_close)
+
+        FlatButton(btn_row, "Cancel", close, bg=surface, fg=ash, hover_bg=border, hover_fg=ink,
+                   font=F(9), padx=16, pady=6).pack(side=tk.RIGHT, padx=(8, 0))
+        self._accent_button(btn_row, "Save", save_and_close,
+                            font=F(9, True), padx=16, pady=6).pack(side=tk.RIGHT)
+
+        dlg.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        try:
+            dlg.wait_visibility()
+            dlg.grab_set()
+        except tk.TclError:
+            pass
+
+    def _on_close(self):
+        self._save_config(show_error=False)
+        self.root.destroy()
+
+    # ── Output directory placeholder ──
+    def _on_out_focus_in(self, event):
+        if self.out_entry.get() == self._out_placeholder:
+            self.out_entry.delete(0, tk.END)
+            self.out_entry.config(fg=self.INK)
+
+    def _on_out_focus_out(self, event):
+        if not self.out_entry.get().strip():
+            self.out_entry.delete(0, tk.END)
+            self.out_entry.insert(0, self._out_placeholder)
+            self.out_entry.config(fg='#5a5a70')
+
+    # ── Matching logic ──
+    def _check_folders(self):
+        """Return list of configured folders that are no longer reachable."""
+        return [f for f in self.jpg_folders + self.raw_folders if not os.path.isdir(f)]
+
+    def _collect_jpg_files(self, settings, jpg_folders):
+        exts = {'.jpg', '.jpeg', '.png'}
+        exts |= parse_extensions(settings.get('jpg_extensions', ''))
+        files = []
+        for folder in jpg_folders:
+            files.extend(f for f in get_all_files_in_folder(folder)
+                         if os.path.splitext(f)[1].lower() in exts)
+        return files
+
+    def _collect_raw_files(self, settings, raw_folders):
+        exts = set(RAW_EXTENSIONS)
+        exts |= parse_extensions(settings.get('raw_extensions', ''))
+        files = []
+        for folder in raw_folders:
+            files.extend(f for f in get_all_files_in_folder(folder)
+                         if os.path.splitext(f)[1].lower() in exts)
+        return files
+
+    def _precheck(self):
+        if self._busy:
+            return False
+        if not self.jpg_folders:
+            if not self._quiet:
+                messagebox.showwarning("Notice", "Please add at least one JPG folder", parent=self.root)
+            return False
+        if not self.raw_folders:
+            if not self._quiet:
+                messagebox.showwarning("Notice", "Please add at least one RAW folder", parent=self.root)
+            return False
+        missing = self._check_folders()
+        if missing:
+            self._show_error("Folder Not Available",
+                             "These folders cannot be found. Is the external drive connected?\n\n"
+                             + "\n".join(missing))
+            return False
+        return True
+
+    def _start_match(self):
+        """Filename matching"""
+        if not self._precheck():
+            return
+
+        self._set_busy(True)
+        self.status_label.config(text="Scanning folders...")
+        self.tree.delete(*self.tree.get_children())
+        self.results = []
+
+        # Snapshot state for the worker thread (never read Tk widgets from threads)
+        settings = dict(self.settings)
+        jpg_folders = list(self.jpg_folders)
+        raw_folders = list(self.raw_folders)
+
+        def worker():
+            try:
+                jpg_files = self._collect_jpg_files(settings, jpg_folders)
+                if not jpg_files:
+                    self._post(self._on_match_done, [], "No JPG files found")
+                    return
+                self._post(self.status_label.config, {'text': f"Found {len(jpg_files)} JPG files, scanning RAW folders..."})
+                raw_files = self._collect_raw_files(settings, raw_folders)
+                self._post(self.status_label.config, {'text': f"Matching {len(jpg_files)} JPG with {len(raw_files)} RAW files..."})
+                results = match_jpg_to_raw(jpg_files, raw_files, settings)
+                self._post(self._on_match_done, results, "Filename matching complete")
+            except Exception as e:
+                traceback.print_exc()
+                self._post(self._on_worker_error, "Matching failed", e)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _start_exif(self):
+        """EXIF matching"""
+        if not self._precheck():
+            return
+
+        self._set_busy(True)
+        self.status_label.config(text="EXIF matching...")
+
+        settings = dict(self.settings)
+        jpg_folders = list(self.jpg_folders)
+        raw_folders = list(self.raw_folders)
+        prev_results = list(self.results)
+
+        def progress(c, t):
+            self._post(self.status_label.config, {'text': f"Reading EXIF: {c}/{t} RAW files"})
+
+        def worker():
+            try:
+                jpg_files = self._collect_jpg_files(settings, jpg_folders)
+                if not jpg_files:
+                    self._post(self._on_match_done, [], "No JPG files found")
+                    return
+                raw_files = self._collect_raw_files(settings, raw_folders)
+
+                base_results = list(prev_results)
+                existing_jpg = {r['jpg_path'] for r in base_results}
+                for f in jpg_files:
+                    if f not in existing_jpg:
+                        base_results.append({'jpg_path': f, 'jpg_name': os.path.basename(f),
+                                             'raw_path': None, 'raw_name': None, 'method': None})
+
+                # RAWs already used by a filename match must not be reassigned
+                used = {r['raw_path'] for r in base_results if r['raw_path']}
+                unmatched = [r for r in base_results if not r['raw_path']]
+                matched = match_by_exif(unmatched, [r for r in raw_files if r not in used],
+                                        progress_cb=progress)
+                matched_dict = {r['jpg_path']: r for r in matched}
+                final = [matched_dict.get(r['jpg_path'], r) for r in base_results]
+                self._post(self._on_match_done, final, "EXIF matching complete")
+            except Exception as e:
+                traceback.print_exc()
+                self._post(self._on_worker_error, "EXIF matching failed", e)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_worker_error(self, title, exc):
+        self._set_busy(False)
+        self.status_label.config(text=f"{title}")
+        self._show_error(title, f"{exc}\n\nIf your photos are on an external drive, make sure it is "
+                                "connected and that JpgFindRaw is allowed to access it "
+                                "(System Settings → Privacy & Security → Files and Folders).")
+
+    def _on_match_done(self, results, status):
+        self.results = results
+        matched = sum(1 for r in results if r['raw_path'])
+        unmatched = len(results) - matched
+        self.matched_label.config(text=f"{matched} matched")
+        self.unmatched_label.config(text=f"{unmatched} unmatched")
+        self.stats_label.config(text=f"{len(results)} JPG | {matched} matched | {unmatched} unmatched")
+        self.status_label.config(text=status)
+
+        self.tree.delete(*self.tree.get_children())
+        self.selected_rows = set()
+        self.tree.tag_configure('notfound', foreground='#ff6b6b')
+        self.tree.tag_configure('found', foreground='#c0c0d0')
+        for r in results:
+            item = self.tree.insert('', tk.END, values=(
+                '☑' if r['raw_path'] else '☐',
+                r['jpg_name'],
+                r['raw_name'] or '- Not Found -',
+                r['method'] or '-'
+            ), tags=('found' if r['raw_path'] else 'notfound',))
+            if r['raw_path']:
+                self.selected_rows.add(item)
+        self._set_busy(False)
+
+    def _on_tree_click(self, event):
+        """Click checkbox column"""
+        if self.tree.identify("region", event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != '#1':
+            return
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        if item in self.selected_rows:
+            self.selected_rows.discard(item)
+            self.tree.set(item, 'checked', '☐')
+        else:
+            self.selected_rows.add(item)
+            self.tree.set(item, 'checked', '☑')
+
+    def _on_tree_double_click(self, event):
+        """Double-click to open corresponding file"""
+        if self.tree.identify("region", event.x, event.y) != "cell":
+            return
+        col = self.tree.identify_column(event.x)
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        idx = self.tree.index(item)
+        if 0 <= idx < len(self.results):
+            result = self.results[idx]
+            if col == '#2':
+                open_in_finder(result.get('jpg_path'))
+            elif col == '#3':
+                open_in_finder(result.get('raw_path'))
+
+    def _find_jpg_folder_for_file(self, jpg_path):
+        for folder in self.jpg_folders:
+            if jpg_path.startswith(folder.rstrip('/\\') + os.sep) or jpg_path.startswith(folder.rstrip('/') + '/'):
+                return folder
+        return None
+
+    def _export_selected(self):
+        """Export selected RAW files"""
+        if self._busy:
+            return
+        if not self.selected_rows:
+            self._show_info("Notice", "No RAW files selected")
+            return
+
+        out_dir = self.out_entry.get().strip()
+        if out_dir == self._out_placeholder:
+            out_dir = ''
+
+        folder_files = {}  # dst_folder -> [{'src','dst','basename'}]
+        for item in self.selected_rows:
+            try:
+                idx = self.tree.index(item)
+            except tk.TclError:
+                continue
+            if not (0 <= idx < len(self.results)):
+                continue
+            result = self.results[idx]
+            raw_path = result.get('raw_path')
+            jpg_path = result.get('jpg_path')
+            if not raw_path or not os.path.exists(raw_path):
+                continue
+            if out_dir:
+                target_folder = out_dir
+            else:
+                jpg_dir = os.path.dirname(jpg_path) if jpg_path else None
+                if not jpg_dir:
+                    jpg_dir = (self._find_jpg_folder_for_file(jpg_path) if jpg_path else None) \
+                        or (self.jpg_folders[0] if self.jpg_folders else None)
+                if not jpg_dir:
+                    continue
+                target_folder = os.path.join(jpg_dir, 'raw') if self.settings.get('create_raw_folder', True) else jpg_dir
+
+            basename = os.path.basename(raw_path)
+            folder_files.setdefault(target_folder, []).append(
+                {'src': raw_path, 'dst': os.path.join(target_folder, basename), 'basename': basename})
+
+        if not folder_files:
+            self._show_info("Notice", "No RAW files to export")
+            return
+
+        conflict_files = []
+        for folder, files in folder_files.items():
+            seen = set()
+            for f in files:
+                if os.path.exists(f['dst']) or f['basename'] in seen:
+                    conflict_files.append(f['basename'])
+                seen.add(f['basename'])
+
+        if conflict_files and not self._quiet:
+            preview = ', '.join(conflict_files[:10])
+            if len(conflict_files) > 10:
+                preview += f' ... and {len(conflict_files) - 10} more'
+            msg = (f"Target folder already has {len(conflict_files)} file(s) with the same name:"
+                   f"\n\n{preview}\n\nOverwrite?")
+            if not messagebox.askyesno("Overwrite Confirmation", msg, parent=self.root):
+                return
+
+        # Create target folders up-front and report problems clearly
+        bad_folders = []
+        for folder in folder_files:
+            try:
+                os.makedirs(folder, exist_ok=True)
+                if not os.access(folder, os.W_OK):
+                    raise PermissionError("folder is read-only")
+            except Exception as e:
+                bad_folders.append(f"{folder}\n    ({e})")
+        if bad_folders:
+            self._show_error("Cannot Write to Output Folder",
+                             "These folders cannot be created or written to:\n\n"
+                             + "\n".join(bad_folders)
+                             + "\n\nNote: NTFS-formatted drives are read-only on macOS. "
+                               "Choose another Output Directory.")
+            return
+
+        tasks = [(f['src'], f['dst'], folder) for folder, files in folder_files.items() for f in files]
+        export_method = self.settings.get('export_method', 'copy')
+
+        self._set_busy(True)
+        self.progress['maximum'] = len(tasks)
+        self.progress['value'] = 0
+        self.progress.pack(fill=tk.X, pady=(4, 0))
+        self.status_label.config(text=f"Exporting {len(tasks)} file(s)...")
+
+        COPY_WORKERS = 4
+        state = {'done': 0, 'ok': 0, 'errors': [], 'folders': set()}
+        lock = threading.Lock()
+
+        def copy_one(src_path, dst_path, dst_folder):
+            err = None
+            try:
+                if export_method == 'cut':
+                    shutil.move(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            except Exception as e:
+                err = f"{os.path.basename(src_path)}: {e}"
+            with lock:
+                state['done'] += 1
+                if err:
+                    state['errors'].append(err)
+                else:
+                    state['ok'] += 1
+                    state['folders'].add(dst_folder)
+                return state['done']
+
+        def update_progress(v):
+            self.progress.config(value=v)
+            self.status_label.config(text=f"Exporting... {v}/{len(tasks)}")
+
+        def worker():
+            try:
+                with ThreadPoolExecutor(max_workers=COPY_WORKERS) as executor:
+                    futures = [executor.submit(copy_one, *t) for t in tasks]
+                    last_posted = 0
+                    for fut in as_completed(futures):
+                        done = fut.result()
+                        # throttle UI updates
+                        if done - last_posted >= max(1, len(tasks) // 200) or done == len(tasks):
+                            last_posted = done
+                            self._post(update_progress, done)
+            except Exception as e:
+                traceback.print_exc()
+                with lock:
+                    state['errors'].append(str(e))
+            self._post(_done)
+
+        def _done():
+            self.progress.pack_forget()
+            self._set_busy(False)
+            action = 'Moved' if export_method == 'cut' else 'Copied'
+            count, errors = state['ok'], state['errors']
+            self._last_export = (count, len(errors), sorted(state['folders']))
+            self.status_label.config(text=f"{action} {count} file(s)" + (f", {len(errors)} failed" if errors else ""))
+            folder_list = '\n'.join(sorted(state['folders']))
+            msg = f"{action} {count} file(s) to:\n{folder_list}"
+            if errors:
+                msg += f"\n\n{len(errors)} file(s) failed:\n" + "\n".join(errors[:10])
+                if len(errors) > 10:
+                    msg += f"\n... and {len(errors) - 10} more"
+                self._show_error("Export Finished With Errors", msg)
+            else:
+                self._show_info("Done", msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ── Self-test (used by the CI build to verify the packaged app) ──
+    def run_selftest(self, base, result_file):
+        import time
+        self._quiet = True
+        self.jpg_folders = [os.path.join(base, 'jpg')]
+        self.raw_folders = [os.path.join(base, 'raw')]
+        self._refresh_both_lists()
+        self.out_entry.delete(0, tk.END)
+        self.out_entry.insert(0, os.path.join(base, 'out'))
+        st = {'stage': 'match', 't0': time.time()}
+
+        def finish(ok, info):
+            with open(result_file, 'w') as f:
+                json.dump({'ok': ok, **info}, f)
+            self.root.destroy()
+
+        def tick():
+            if time.time() - st['t0'] > 60:
+                return finish(False, {'error': f'timeout in stage {st["stage"]}'})
+            if st['stage'] == 'match' and not self._busy and self.results:
+                st['stage'] = 'exif'
+                self._start_exif()
+            elif st['stage'] == 'exif' and not self._busy:
+                st['stage'] = 'export'
+                self._export_selected()
+            elif st['stage'] == 'export' and self._last_export is not None:
+                count, failed, _ = self._last_export
+                matched = {r['jpg_name']: (r['raw_name'], r['method']) for r in self.results}
+                out_files = sorted(os.listdir(os.path.join(base, 'out')))
+                return finish(True, {'matched': matched, 'copied': count,
+                                     'failed': failed, 'out_files': out_files})
+            self.root.after(200, tick)
+
+        self._start_match()
+        self.root.after(200, tick)
+
+
+# ============================================================
+# Entry point
+# ============================================================
+
+def main():
+    root = tk.Tk()
+    if _IS_WINDOWS:
+        try:
+            from ctypes import windll
+            windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
+    app = FindRawApp(root)
+    selftest_dir = os.environ.get('JFR_SELFTEST_DIR')
+    if selftest_dir:
+        app.run_selftest(selftest_dir, os.environ.get('JFR_SELFTEST_RESULT',
+                                                      os.path.join(selftest_dir, 'result.json')))
+    root.mainloop()
+
+
+if __name__ == '__main__':
+    main()

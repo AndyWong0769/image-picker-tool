@@ -1,0 +1,90 @@
+name: Build JpgFindRaw (English) macOS DMG
+
+on:
+  push:
+    tags:
+      - 'en*'          # e.g. git tag en2.1.0 && git push origin en2.1.0  -> also creates a Release
+    paths:
+      - 'jpg-find-raw-en/**'
+      - '.github/workflows/build-jpgfindraw-en.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PY_VERSION: '3.13.7'   # python.org universal2 installer (bundles Tcl/Tk 8.6.x)
+
+jobs:
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: jpg-find-raw-en
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install python.org universal2 Python
+        run: |
+          curl -fsSL -o /tmp/python.pkg "https://www.python.org/ftp/python/${PY_VERSION}/python-${PY_VERSION}-macos11.pkg"
+          sudo installer -pkg /tmp/python.pkg -target /
+          PY="/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13"
+          "$PY" --version
+          "$PY" -c "import tkinter; print('Tk', tkinter.Tcl().eval('info patchlevel'))"
+          lipo -archs "$PY"
+          "$PY" -m venv /tmp/venv
+          /tmp/venv/bin/pip install --upgrade pip
+          /tmp/venv/bin/pip install "pyinstaller>=6.11,<7"
+
+      - name: Build .app (universal2, onedir)
+        run: |
+          /tmp/venv/bin/pyinstaller --noconfirm --clean JpgFindRaw.spec
+          echo "--- architectures ---"
+          lipo -archs dist/JpgFindRaw.app/Contents/MacOS/JpgFindRaw
+          find dist/JpgFindRaw.app -name 'libtk*.dylib' -exec lipo -archs {} \;
+          /usr/libexec/PlistBuddy -c Print dist/JpgFindRaw.app/Contents/Info.plist
+          codesign --verify --deep --verbose=2 dist/JpgFindRaw.app
+
+      - name: Self-test packaged app (Apple Silicon)
+        run: |
+          T=$(mktemp -d)
+          python3 tests/make_testdata.py "$T"
+          JFR_SELFTEST_DIR="$T" ./dist/JpgFindRaw.app/Contents/MacOS/JpgFindRaw &
+          PID=$!
+          for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
+          kill $PID 2>/dev/null || true
+          python3 tests/make_testdata.py check "$T/result.json"
+
+      - name: Self-test packaged app (Intel via Rosetta)
+        continue-on-error: true
+        run: |
+          T=$(mktemp -d)
+          python3 tests/make_testdata.py "$T"
+          JFR_SELFTEST_DIR="$T" arch -x86_64 ./dist/JpgFindRaw.app/Contents/MacOS/JpgFindRaw &
+          PID=$!
+          for i in $(seq 1 120); do [ -f "$T/result.json" ] && break; sleep 1; done
+          kill $PID 2>/dev/null || true
+          python3 tests/make_testdata.py check "$T/result.json"
+
+      - name: Create DMG
+        run: |
+          rm -rf dmgroot && mkdir dmgroot
+          cp -R dist/JpgFindRaw.app dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "JpgFindRaw" -srcfolder dmgroot -ov -format UDZO JpgFindRaw_Installer.dmg
+          ls -la JpgFindRaw_Installer.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JpgFindRaw-macOS-dmg
+          path: jpg-find-raw-en/JpgFindRaw_Installer.dmg
+          retention-days: 30
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: jpg-find-raw-en/JpgFindRaw_Installer.dmg
