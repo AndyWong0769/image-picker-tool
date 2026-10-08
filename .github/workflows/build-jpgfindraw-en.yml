@@ -2,6 +2,8 @@ name: Build JpgFindRaw (English) macOS DMG
 
 on:
   push:
+    branches:
+      - '**'
     tags:
       - 'en*'          # e.g. git tag en2.1.0 && git push origin en2.1.0  -> also creates a Release
     paths:
