@@ -33,7 +33,7 @@ from tkinter import ttk, filedialog, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw"
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -492,6 +492,7 @@ class FindRawApp:
     def __init__(self, root):
         self.root = root
         self.root.title("JPG Match RAW")
+        self._set_window_icon()
         self._fit_window_to_screen()
         self.root.configure(bg=self.BG)
 
@@ -531,13 +532,37 @@ class FindRawApp:
         except tk.TclError:
             sw, sh = 1280, 800
         # leave room for the macOS menu bar + Dock / Windows taskbar
-        reserve_h = 160 if _IS_MACOS else 100
-        w = max(640, min(950, sw - 60))
-        h = max(480, min(820, sh - reserve_h))
+        # Windows high-DPI (125%/150%...): fonts grow with the scale factor,
+        # so the window must grow too.
+        sc = self._scale = self._ui_scale()
+        reserve_h = 160 if _IS_MACOS else int(90 * sc)
+        w = max(640, min(int(950 * sc), sw - 60))
+        h = max(480, min(int(820 * sc), sh - reserve_h))
         x = max(0, (sw - w) // 2)
         y = max(25 if _IS_MACOS else 0, (sh - reserve_h - h) // 2 + (25 if _IS_MACOS else 0))
         self.root.geometry(f"{w}x{h}+{x}+{y}")
-        self.root.minsize(min(720, w), min(520, h))
+        self.root.minsize(min(int(720 * sc), w), min(int(520 * sc), h))
+
+    def _ui_scale(self):
+        """Screen scale factor relative to 96 dpi (Windows only; 1.0 elsewhere)."""
+        if not _IS_WINDOWS:
+            return 1.0
+        try:
+            return max(1.0, min(3.0, self.root.winfo_fpixels('1i') / 96.0))
+        except Exception:
+            return 1.0
+
+    def _set_window_icon(self):
+        """Title-bar / taskbar icon (bundled app.ico on Windows)."""
+        if not _IS_WINDOWS:
+            return
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        ico = os.path.join(base, 'app.ico')
+        if os.path.exists(ico):
+            try:
+                self.root.iconbitmap(default=ico)
+            except Exception:
+                pass
 
     # ── Thread-safe UI dispatch ──
     def _post(self, fn, *args):
@@ -761,7 +786,7 @@ class FindRawApp:
                         background='#1a1a24', foreground='#c0c0d0',
                         fieldbackground='#1a1a24', bordercolor='#1a1a24',
                         lightcolor='#1a1a24', darkcolor='#1a1a24', borderwidth=0,
-                        font=F(9), rowheight=22 + _FONT_DELTA * 2)
+                        font=F(9), rowheight=int((22 + _FONT_DELTA * 2) * self._scale))
         style.layout('Dark.Treeview', [('Dark.Treeview.treearea', {'sticky': 'nswe'})])
         style.configure("Dark.Treeview.Heading",
                         background='#6c8aff', foreground='#ffffff',
@@ -856,9 +881,11 @@ class FindRawApp:
     # ── Folder management ──
     def _ask_folder(self, title):
         try:
-            return filedialog.askdirectory(title=title, parent=self.root, mustexist=True)
+            d = filedialog.askdirectory(title=title, parent=self.root, mustexist=True)
         except Exception:
             return ''
+        # Windows dialogs return C:/a/b; normalise so paths display/compare consistently
+        return os.path.normpath(d) if d else ''
 
     def _add_jpg_folder(self):
         d = self._ask_folder("Add JPG Folder")
@@ -936,8 +963,16 @@ class FindRawApp:
     # ── Config persistence ──
     def _load_config(self):
         try:
-            if os.path.exists(_CONFIG_PATH):
-                with open(_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            path = _CONFIG_PATH
+            if not os.path.exists(path):
+                # v2.0 stored '.jpg_find_raw.json' next to the exe/script
+                legacy_dir = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
+                              else os.path.dirname(os.path.abspath(__file__)))
+                legacy = os.path.join(legacy_dir, '.jpg_find_raw.json')
+                if os.path.exists(legacy):
+                    path = legacy
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 # Only load folders that still exist (external drive may be unplugged)
                 self.jpg_folders = [p for p in data.get('jpg_folders', []) if os.path.isdir(p)]
@@ -1070,7 +1105,7 @@ class FindRawApp:
         # Size to content (fonts differ per platform), capped to the screen
         dlg.update_idletasks()
         sh = dlg.winfo_screenheight()
-        w = max(480, dlg.winfo_reqwidth())
+        w = max(int(480 * self._scale), dlg.winfo_reqwidth())
         h = min(dlg.winfo_reqheight(), sh - 80)
         x = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
         y = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
@@ -1477,13 +1512,18 @@ class FindRawApp:
 # ============================================================
 
 def main():
-    root = tk.Tk()
     if _IS_WINDOWS:
+        # Must be called before the first window is created, otherwise Windows
+        # bitmap-stretches the window on high-DPI screens (blurry text).
         try:
             from ctypes import windll
             windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
-            pass
+            try:
+                windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+    root = tk.Tk()
     app = FindRawApp(root)
     selftest_dir = os.environ.get('JFR_SELFTEST_DIR')
     if selftest_dir:

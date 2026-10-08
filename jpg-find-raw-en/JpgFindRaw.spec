@@ -8,7 +8,7 @@
 #  - universal2: one app for Intel and Apple Silicon Macs. Requires the
 #    python.org universal2 Python (see .github/workflows/build-jpgfindraw-en.yml).
 
-APP_VERSION = '2.1.1'
+APP_VERSION = '2.1.2'
 
 a = Analysis(
     ['JpgFindRaw.py'],
