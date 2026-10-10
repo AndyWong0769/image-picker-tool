@@ -76,5 +76,43 @@ W = [
 ]
 for w in W:
     R(*w)
+
+# ===== 3. macOS: never let Tk create its hidden "console" window =====
+# When launched from Finder, stdin is /dev/null and Tk then builds a hidden
+# console with its own menubar. On macOS 11 that path crashed
+# (NSMenuItem initWithTitle: nil). Giving the process a pipe as stdin makes
+# Tk skip the console entirely.
+R("""def main():
+    if _IS_WINDOWS:""", """def _disable_tk_console_on_macos():
+    \"\"\"Tk opens a hidden console when stdin looks like /dev/null (Finder launch).
+    Replace stdin with a pipe so Tk skips it (avoids a menubar crash on macOS 11).\"\"\"
+    if not _IS_MACOS:
+        return
+    import stat
+    try:
+        st = os.fstat(0)
+        nullish = (not os.isatty(0)) and stat.S_ISCHR(st.st_mode)
+    except OSError:
+        nullish = True
+    if nullish:
+        try:
+            r, w = os.pipe()
+            os.dup2(r, 0)
+            os.close(r)
+            globals()['_STDIN_PIPE_W'] = w   # keep the write end open
+        except OSError:
+            pass
+
+
+def main():
+    _disable_tk_console_on_macos()
+    if _IS_WINDOWS:""")
+
+# ===== 4. version =====
+R('APP_VERSION = "2.1.2"', 'APP_VERSION = "2.1.3"')
+
+# ===== 5. self-test also reports whether Tk created its console =====
+R("return finish(True, {'matched': matched,", "return finish(True, {'tk_console': bool(self.root.tk.call('info', 'commands', 'console')), 'matched': matched,")
+
 open(p, 'w', encoding='utf-8').write(s)
 print("ok")

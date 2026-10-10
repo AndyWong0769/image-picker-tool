@@ -52,32 +52,20 @@ jobs:
           kill $PID 2>/dev/null || true
           python3 ../jpg-find-raw-en/tests/make_testdata.py check "$T/result.json"
 
-      - name: Repro - launch like Finder on a Chinese-language system
-        continue-on-error: true
+      - name: Launch like Finder on a Chinese-language system (must not crash, no Tk console)
         run: |
-          mkdir -p /tmp/pubcrash
-          exec > >(tee /tmp/pubcrash/repro.txt) 2>&1
+          /usr/libexec/PlistBuddy -c "Print :CFBundleName" "dist/JPG查找RAW.app/Contents/Info.plist" | LC_ALL=C grep -qv '[^ -~]' && echo "CFBundleName is ASCII"
           defaults write -g AppleLanguages -array zh-Hans en
           defaults write -g AppleLocale zh_CN
           T=$(mktemp -d)
           python3 ../jpg-find-raw-en/tests/make_testdata.py "$T"
-          echo "=== A: open (LaunchServices, like double-click in Finder)"
-          open --env JFR_SELFTEST_DIR="$T" "dist/JPG查找RAW.app" || true
-          for i in $(seq 1 60); do [ -f "$T/result.json" ] && break; sleep 1; done
-          [ -f "$T/result.json" ] && echo "A: OK (no crash)" || echo "A: NO RESULT (crashed?)"
+          open --env JFR_SELFTEST_DIR="$T" "dist/JPG查找RAW.app"
+          for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
           pkill -f JpgFindRawCN || true
-          T2=$(mktemp -d); python3 ../jpg-find-raw-en/tests/make_testdata.py "$T2"
-          echo "=== B: direct exec, LANG=zh_CN.UTF-8, stdin=/dev/null"
-          LANG=zh_CN.UTF-8 JFR_SELFTEST_DIR="$T2" "./dist/JPG查找RAW.app/Contents/MacOS/JpgFindRawCN" < /dev/null; echo "B exit code: $?"
-          [ -f "$T2/result.json" ] && echo "B: OK" || echo "B: NO RESULT"
-          sleep 3
-          echo "=== crash reports"
-          ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i jpgfind || echo "(none)"
-          for f in ~/Library/Logs/DiagnosticReports/JpgFindRawCN*; do [ -f "$f" ] && head -c 3000 "$f" | grep -E "reason|Exception|Termination|abort" ; done
-          cp ~/Library/Logs/DiagnosticReports/JpgFindRawCN* /tmp/pubcrash/ 2>/dev/null || true
-          ls -la ~/Library/Logs/DiagnosticReports/ | tail -5
-          defaults delete -g AppleLanguages || true
-          defaults delete -g AppleLocale || true
+          defaults delete -g AppleLanguages 2>/dev/null || true
+          defaults delete -g AppleLocale 2>/dev/null || true
+          python3 ../jpg-find-raw-en/tests/make_testdata.py check "$T/result.json"
+          python3 -c "import json,sys; r=json.load(open('$T/result.json')); print('tk_console =', r.get('tk_console')); sys.exit(1 if r.get('tk_console') is not False else 0)"
 
       - name: Screenshot of the running app (real macOS rendering)
         continue-on-error: true
@@ -110,7 +98,6 @@ jobs:
           rm -rf /tmp/pub && mkdir /tmp/pub
           cp JPG查找RAW_Installer.dmg /tmp/pub/
           cp /tmp/zh_screenshot.png /tmp/pub/ 2>/dev/null || true
-          cp /tmp/pubcrash/* /tmp/pub/ 2>/dev/null || true
           cd /tmp/pub
           git init -q -b dmg-build-zh
           git config user.name "github-actions[bot]"

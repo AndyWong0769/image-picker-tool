@@ -2,7 +2,7 @@
 # PyInstaller spec — JPG查找RAW 中文版 (macOS, universal2, onedir .app)
 #   pyinstaller --noconfirm --clean JpgFindRaw_zh.spec
 
-APP_VERSION = '2.1.2'
+APP_VERSION = '2.1.3'
 
 a = Analysis(
     ['JpgFindRaw_zh.py'],
@@ -42,12 +42,13 @@ app = BUNDLE(
     bundle_identifier='com.imagepicker.jpgfindraw.zh',
     version=APP_VERSION,
     info_plist={
-        'CFBundleName': 'JPG查找RAW',
+        # CFBundleName MUST be ASCII: Tk uses it as the application-menu title and
+        # a non-ASCII name crashed Tk on macOS 11 (NSMenuItem title nil).
+        'CFBundleName': 'JpgFindRawCN',
         'CFBundleDisplayName': 'JPG查找RAW',
         'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': APP_VERSION,
-        'CFBundleDevelopmentRegion': 'zh_CN',
-        'CFBundleLocalizations': ['zh_CN', 'zh-Hans'],
+        'CFBundleDevelopmentRegion': 'en',   # same as the English build (known good on macOS 11)
         'LSMinimumSystemVersion': '10.13',
         'LSApplicationCategoryType': 'public.app-category.photography',
         'NSHighResolutionCapable': True,
