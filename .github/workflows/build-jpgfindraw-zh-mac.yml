@@ -52,6 +52,30 @@ jobs:
           kill $PID 2>/dev/null || true
           python3 ../jpg-find-raw-en/tests/make_testdata.py check "$T/result.json"
 
+      - name: Repro - launch like Finder on a Chinese-language system
+        continue-on-error: true
+        run: |
+          defaults write -g AppleLanguages -array zh-Hans en
+          defaults write -g AppleLocale zh_CN
+          T=$(mktemp -d)
+          python3 ../jpg-find-raw-en/tests/make_testdata.py "$T"
+          echo "=== A: open (LaunchServices, like double-click in Finder)"
+          open --env JFR_SELFTEST_DIR="$T" "dist/JPG查找RAW.app" || true
+          for i in $(seq 1 60); do [ -f "$T/result.json" ] && break; sleep 1; done
+          [ -f "$T/result.json" ] && echo "A: OK (no crash)" || echo "A: NO RESULT (crashed?)"
+          pkill -f JpgFindRawCN || true
+          T2=$(mktemp -d); python3 ../jpg-find-raw-en/tests/make_testdata.py "$T2"
+          echo "=== B: direct exec, LANG=zh_CN.UTF-8, stdin=/dev/null"
+          LANG=zh_CN.UTF-8 JFR_SELFTEST_DIR="$T2" "./dist/JPG查找RAW.app/Contents/MacOS/JpgFindRawCN" < /dev/null; echo "B exit code: $?"
+          [ -f "$T2/result.json" ] && echo "B: OK" || echo "B: NO RESULT"
+          sleep 3
+          echo "=== crash reports"
+          ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i jpgfind || echo "(none)"
+          for f in ~/Library/Logs/DiagnosticReports/JpgFindRawCN*; do [ -f "$f" ] && head -c 3000 "$f" | grep -E "reason|Exception|Termination|abort" ; done
+          mkdir -p /tmp/pubcrash && cp ~/Library/Logs/DiagnosticReports/JpgFindRawCN* /tmp/pubcrash/ 2>/dev/null || true
+          defaults delete -g AppleLanguages || true
+          defaults delete -g AppleLocale || true
+
       - name: Screenshot of the running app (real macOS rendering)
         continue-on-error: true
         run: |
@@ -83,6 +107,7 @@ jobs:
           rm -rf /tmp/pub && mkdir /tmp/pub
           cp JPG查找RAW_Installer.dmg /tmp/pub/
           cp /tmp/zh_screenshot.png /tmp/pub/ 2>/dev/null || true
+          cp /tmp/pubcrash/* /tmp/pub/ 2>/dev/null || true
           cd /tmp/pub
           git init -q -b dmg-build-zh
           git config user.name "github-actions[bot]"
