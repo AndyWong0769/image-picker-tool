@@ -33,10 +33,26 @@ from tkinter import ttk, filedialog, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw"
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.2.0"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
+
+# Texts for the JPG / RAW source lists
+_SRC_TXT = {
+    'jpg_count': "{n} images",
+    'raw_count': "{n} RAW files",
+    'jpg_total': "Total: {n} images",
+    'raw_total': "Total: {n} RAW files",
+    'counting': "counting...",
+    'missing': "not found",
+    'picked_many': "{n} picked images: {first} ... ({folder})",
+    'picked_one': "{first} ({folder})",
+    'add_images': "+ Add Images",
+    'pick_title': "Select JPG images (multi-select, Ctrl+A / Cmd+A selects all)",
+    'img_type': "Images",
+    'all_type': "All files",
+}
 
 
 # ============================================================
@@ -496,8 +512,11 @@ class FindRawApp:
         self._fit_window_to_screen()
         self.root.configure(bg=self.BG)
 
-        self.jpg_folders = []
-        self.raw_folders = []
+        # Sources shown in the JPG / RAW lists:
+        #   {'id', 'type': 'folder' | 'files', 'path', 'files', 'count'}
+        self.jpg_sources = []
+        self.raw_sources = []
+        self._src_seq = 0
         self.results = []
         self.selected_rows = set()
         self._busy = False          # a match/export job is running
@@ -665,6 +684,8 @@ class FindRawApp:
         jpg_header.pack(fill=tk.X)
         tk.Label(jpg_header, text="JPG Directory", bg=surface, fg=ash,
                  font=F(10, True)).pack(side=tk.LEFT)
+        self.jpg_total_label = tk.Label(jpg_header, text="", bg=surface, fg=accent, font=F(9, True))
+        self.jpg_total_label.pack(side=tk.LEFT, padx=(10, 0))
 
         jpg_btn_row = tk.Frame(jpg_header, bg=surface)
         jpg_btn_row.pack(side=tk.RIGHT)
@@ -677,32 +698,21 @@ class FindRawApp:
         self.jpg_add_btn = self._accent_button(jpg_btn_row, "+ Add Folder", self._add_jpg_folder,
                                                font=F(9, True), padx=10, pady=4)
         self.jpg_add_btn.pack(side=tk.LEFT)
+        self.jpg_img_btn = FlatButton(jpg_btn_row, _SRC_TXT['add_images'], self._add_jpg_images,
+                                      bg=border, fg="#ffffff", hover_bg="#4a4a62",
+                                      disabled_bg=surface, disabled_fg=ash,
+                                      font=F(9, True), padx=10, pady=4)
+        self.jpg_img_btn.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.jpg_listbox_frame = tk.Frame(folder_card, bg='#1a1a24',
-                                          highlightbackground=border, highlightthickness=1)
-        self.jpg_listbox_frame.pack(fill=tk.X, pady=(6, 0), ipady=2)
-        self.jpg_listbox = tk.Listbox(self.jpg_listbox_frame, height=3,
-                                      bg='#1a1a24', fg='#c0c0d0', font=M(9),
-                                      selectbackground='#2a2a4a', selectforeground='#e0e0f0',
-                                      relief="flat", bd=0, highlightthickness=0,
-                                      activestyle='none')
-        self.jpg_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
-        self.jpg_listbox.bind('<Delete>', lambda e: self._remove_selected_jpg())
-        self.jpg_listbox.bind('<BackSpace>', lambda e: self._remove_selected_jpg())
-        self.jpg_listbox.bind('<Double-1>', lambda e: self._open_jpg_folder())
-        self._bind_right_click(self.jpg_listbox, self._popup_jpg_menu)
-
-        jpg_scroll = ttk.Scrollbar(self.jpg_listbox_frame, orient="vertical",
-                                   command=self.jpg_listbox.yview,
-                                   style="Dark.Vertical.TScrollbar")
-        jpg_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.jpg_listbox.config(yscrollcommand=jpg_scroll.set)
+        self.jpg_list = self._make_source_list(folder_card, 'jpg')
 
         # === RAW Directory ===
         raw_header = tk.Frame(folder_card, bg=surface)
         raw_header.pack(fill=tk.X, pady=(12, 0))
         tk.Label(raw_header, text="RAW Directory", bg=surface, fg=ash,
                  font=F(10, True)).pack(side=tk.LEFT)
+        self.raw_total_label = tk.Label(raw_header, text="", bg=surface, fg=accent, font=F(9, True))
+        self.raw_total_label.pack(side=tk.LEFT, padx=(10, 0))
 
         raw_btn_row = tk.Frame(raw_header, bg=surface)
         raw_btn_row.pack(side=tk.RIGHT)
@@ -710,25 +720,7 @@ class FindRawApp:
                                                font=F(9, True), padx=10, pady=4)
         self.raw_add_btn.pack(side=tk.RIGHT)
 
-        self.raw_listbox_frame = tk.Frame(folder_card, bg='#1a1a24',
-                                          highlightbackground=border, highlightthickness=1)
-        self.raw_listbox_frame.pack(fill=tk.X, pady=(6, 0), ipady=2)
-        self.raw_listbox = tk.Listbox(self.raw_listbox_frame, height=3,
-                                      bg='#1a1a24', fg='#c0c0d0', font=M(9),
-                                      selectbackground='#2a2a4a', selectforeground='#e0e0f0',
-                                      relief="flat", bd=0, highlightthickness=0,
-                                      activestyle='none')
-        self.raw_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
-        self.raw_listbox.bind('<Delete>', lambda e: self._remove_selected_raw())
-        self.raw_listbox.bind('<BackSpace>', lambda e: self._remove_selected_raw())
-        self.raw_listbox.bind('<Double-1>', lambda e: self._open_raw_folder())
-        self._bind_right_click(self.raw_listbox, self._popup_raw_menu)
-
-        raw_scroll = ttk.Scrollbar(self.raw_listbox_frame, orient="vertical",
-                                   command=self.raw_listbox.yview,
-                                   style="Dark.Vertical.TScrollbar")
-        raw_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.raw_listbox.config(yscrollcommand=raw_scroll.set)
+        self.raw_list = self._make_source_list(folder_card, 'raw')
 
         # === Output Directory ===
         out_row = tk.Frame(folder_card, bg=surface)
@@ -873,7 +865,7 @@ class FindRawApp:
     def _set_busy(self, busy: bool):
         """Enable/disable the action buttons while a job runs."""
         self._busy = busy
-        for b in (self.match_btn, self.export_btn, self.jpg_add_btn, self.raw_add_btn):
+        for b in (self.match_btn, self.export_btn, self.jpg_add_btn, self.jpg_img_btn, self.raw_add_btn):
             b.set_enabled(not busy)
         has_unmatched = any(not r['raw_path'] for r in self.results)
         self.exif_btn.set_enabled((not busy) and has_unmatched)
@@ -887,17 +879,205 @@ class FindRawApp:
         # Windows dialogs return C:/a/b; normalise so paths display/compare consistently
         return os.path.normpath(d) if d else ''
 
+    # -- source model helpers --
+    @property
+    def jpg_folders(self):
+        return [x['path'] for x in self.jpg_sources if x['type'] == 'folder']
+
+    @jpg_folders.setter
+    def jpg_folders(self, paths):
+        self.jpg_sources = [self._new_source('folder', p) for p in paths]
+
+    @property
+    def raw_folders(self):
+        return [x['path'] for x in self.raw_sources]
+
+    @raw_folders.setter
+    def raw_folders(self, paths):
+        self.raw_sources = [self._new_source('folder', p) for p in paths]
+
+    def _new_source(self, typ, path, files=None):
+        self._src_seq += 1
+        return {'id': self._src_seq, 'type': typ, 'path': path, 'files': files or [], 'count': None}
+
+    def _sources(self, kind):
+        return self.jpg_sources if kind == 'jpg' else self.raw_sources
+
+    def _exts(self, kind, settings=None):
+        st = settings or self.settings
+        if kind == 'jpg':
+            return {'.jpg', '.jpeg', '.png'} | parse_extensions(st.get('jpg_extensions', ''))
+        return set(RAW_EXTENSIONS) | parse_extensions(st.get('raw_extensions', ''))
+
+    def _add_source(self, kind, src):
+        self._sources(kind).append(src)
+        self._start_count(kind, src)
+        self._refresh_list(kind)
+
     def _add_jpg_folder(self):
         d = self._ask_folder("Add JPG Folder")
         if d and d not in self.jpg_folders:
-            self.jpg_folders.append(d)
-            self._refresh_jpg_list()
+            self._add_source('jpg', self._new_source('folder', d))
 
     def _add_raw_folder(self):
         d = self._ask_folder("Add RAW Folder")
         if d and d not in self.raw_folders:
-            self.raw_folders.append(d)
-            self._refresh_raw_list()
+            self._add_source('raw', self._new_source('folder', d))
+
+    def _add_jpg_images(self):
+        """Pick single / multiple images (file dialog shows thumbnails)."""
+        try:
+            files = filedialog.askopenfilenames(
+                title=_SRC_TXT['pick_title'], parent=self.root,
+                filetypes=[(_SRC_TXT['img_type'], "*.jpg *.jpeg *.png *.JPG *.JPEG *.PNG"),
+                           (_SRC_TXT['all_type'], "*.*")])
+        except Exception:
+            files = ()
+        if isinstance(files, str):
+            files = self.root.tk.splitlist(files)
+        files = [os.path.normpath(f) for f in files if f]
+        if not files:
+            return
+        self._add_source('jpg', self._new_source('files', os.path.dirname(files[0]), files))
+
+    def _start_count(self, kind, src):
+        """Count matching files in the background; result goes through the UI queue."""
+        src['count'] = None
+        exts = self._exts(kind)
+        sid = src['id']
+        if src['type'] == 'files':
+            src['count'] = sum(1 for f in src['files'] if os.path.isfile(f))
+            return
+
+        def work():
+            if not os.path.isdir(src['path']):
+                n = -1
+            else:
+                try:
+                    n = sum(1 for f in get_all_files_in_folder(src['path'])
+                            if os.path.splitext(f)[1].lower() in exts)
+                except Exception:
+                    n = -1
+            self._post(self._on_count, kind, sid, n)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_count(self, kind, sid, n):
+        for x in self._sources(kind):
+            if x['id'] == sid:
+                x['count'] = n
+                self._refresh_list(kind)
+                return
+
+    def _recount_all(self):
+        for kind in ('jpg', 'raw'):
+            for x in self._sources(kind):
+                self._start_count(kind, x)
+            self._refresh_list(kind)
+
+    def _make_source_list(self, parent, kind):
+        """Two-column list: path on the left, file count on the right."""
+        style = ttk.Style()
+        try:
+            style.theme_use('clam')
+        except tk.TclError:
+            pass
+        style.configure("Src.Treeview", background='#1a1a24', foreground='#c0c0d0',
+                        fieldbackground='#1a1a24', bordercolor='#1a1a24',
+                        lightcolor='#1a1a24', darkcolor='#1a1a24', borderwidth=0,
+                        font=M(9), rowheight=int((20 + _FONT_DELTA * 2) * self._scale))
+        style.layout('Src.Treeview', [('Src.Treeview.treearea', {'sticky': 'nswe'})])
+        style.map("Src.Treeview", background=[('selected', '#2a2a4a')],
+                  foreground=[('selected', '#e0e0f0')])
+        frame = tk.Frame(parent, bg='#1a1a24', highlightbackground=self.BORDER, highlightthickness=1)
+        frame.pack(fill=tk.X, pady=(6, 0))
+        tree = ttk.Treeview(frame, columns=('path', 'count'), show='', height=3,
+                            selectmode='browse', style="Src.Treeview")
+        tree.column('path', stretch=True, width=400, anchor='w')
+        tree.column('count', stretch=False, width=int(150 * self._scale), anchor='e')
+        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview, style="Dark.Vertical.TScrollbar")
+        tree.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=4)
+        tree.tag_configure('missing', foreground='#ff6b6b')
+        tree.bind('<Delete>', lambda e: self._remove_selected(kind))
+        tree.bind('<BackSpace>', lambda e: self._remove_selected(kind))
+        tree.bind('<Double-1>', lambda e: self._open_selected(kind))
+        self._bind_right_click(tree, lambda e: self._popup_source_menu(kind, e))
+        return tree
+
+    def _source_label(self, src):
+        if src['type'] == 'folder':
+            return src['path']
+        files = src['files']
+        fmt = _SRC_TXT['picked_one'] if len(files) == 1 else _SRC_TXT['picked_many']
+        return fmt.format(n=len(files), first=os.path.basename(files[0]), folder=src['path'])
+
+    def _refresh_list(self, kind):
+        tree = self.jpg_list if kind == 'jpg' else self.raw_list
+        total_label = self.jpg_total_label if kind == 'jpg' else self.raw_total_label
+        tree.delete(*tree.get_children())
+        total, pending = 0, False
+        for x in self._sources(kind):
+            n = x['count']
+            if n is None:
+                cnt, pending = _SRC_TXT['counting'], True
+            elif n < 0:
+                cnt = _SRC_TXT['missing']
+            else:
+                cnt = _SRC_TXT[kind + '_count'].format(n=n)
+                total += n
+            tree.insert('', tk.END, iid=str(x['id']), values=(self._source_label(x), cnt),
+                        tags=('missing',) if (n is not None and n < 0) else ())
+        if not self._sources(kind):
+            total_label.config(text="")
+        elif pending:
+            total_label.config(text=_SRC_TXT['counting'])
+        else:
+            total_label.config(text=_SRC_TXT[kind + '_total'].format(n=total))
+
+    def _selected_source(self, kind):
+        tree = self.jpg_list if kind == 'jpg' else self.raw_list
+        sel = tree.selection()
+        if not sel:
+            return None
+        for x in self._sources(kind):
+            if str(x['id']) == sel[0]:
+                return x
+        return None
+
+    def _open_selected(self, kind):
+        x = self._selected_source(kind)
+        if x:
+            open_in_finder(x['path'])
+
+    def _remove_selected(self, kind):
+        x = self._selected_source(kind)
+        if x and not self._busy:
+            self._sources(kind).remove(x)
+            self._refresh_list(kind)
+
+    def _popup_source_menu(self, kind, event):
+        tree = self.jpg_list if kind == 'jpg' else self.raw_list
+        row = tree.identify_row(event.y)
+        if not row:
+            return
+        tree.selection_set(row)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Show in Finder" if _IS_MACOS else "Open Folder",
+                         command=lambda: self._open_selected(kind))
+        menu.add_command(label="Remove Path", command=lambda: self._remove_selected(kind))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    # kept for compatibility (self-test)
+    def _refresh_jpg_list(self):
+        self._refresh_list('jpg')
+
+    def _refresh_raw_list(self):
+        self._refresh_list('raw')
 
     def _browse_out(self):
         d = self._ask_folder("Select Output Directory")
@@ -905,58 +1085,6 @@ class FindRawApp:
             self.out_entry.delete(0, tk.END)
             self.out_entry.insert(0, d)
             self.out_entry.config(fg=self.INK)
-
-    def _open_jpg_folder(self):
-        sel = self.jpg_listbox.curselection()
-        if sel:
-            open_in_finder(self.jpg_listbox.get(sel[0]))
-
-    def _open_raw_folder(self):
-        sel = self.raw_listbox.curselection()
-        if sel:
-            open_in_finder(self.raw_listbox.get(sel[0]))
-
-    def _popup_menu(self, listbox, event, open_cmd, remove_cmd):
-        if listbox.size() == 0:
-            return
-        sel = listbox.nearest(event.y)
-        listbox.selection_clear(0, tk.END)
-        listbox.selection_set(sel)
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Show in Finder" if _IS_MACOS else "Open Folder", command=open_cmd)
-        menu.add_command(label="Remove Path", command=remove_cmd)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
-
-    def _popup_jpg_menu(self, event):
-        self._popup_menu(self.jpg_listbox, event, self._open_jpg_folder, self._remove_selected_jpg)
-
-    def _popup_raw_menu(self, event):
-        self._popup_menu(self.raw_listbox, event, self._open_raw_folder, self._remove_selected_raw)
-
-    def _refresh_jpg_list(self):
-        self.jpg_listbox.delete(0, tk.END)
-        for folder in self.jpg_folders:
-            self.jpg_listbox.insert(tk.END, folder)
-
-    def _refresh_raw_list(self):
-        self.raw_listbox.delete(0, tk.END)
-        for folder in self.raw_folders:
-            self.raw_listbox.insert(tk.END, folder)
-
-    def _remove_selected_jpg(self):
-        sel = self.jpg_listbox.curselection()
-        if sel and 0 <= sel[0] < len(self.jpg_folders):
-            self.jpg_folders.pop(sel[0])
-            self._refresh_jpg_list()
-
-    def _remove_selected_raw(self):
-        sel = self.raw_listbox.curselection()
-        if sel and 0 <= sel[0] < len(self.raw_folders):
-            self.raw_folders.pop(sel[0])
-            self._refresh_raw_list()
 
     # ── Config persistence ──
     def _load_config(self):
@@ -1085,6 +1213,7 @@ class FindRawApp:
             self.settings['jpg_suffix_filters'] = jpg_suffix_entry.get().strip()
             if self._save_config():
                 self.status_label.config(text="Settings saved")
+            self._recount_all()
             close()
 
         dlg.protocol('WM_DELETE_WINDOW', save_and_close)
@@ -1127,31 +1256,44 @@ class FindRawApp:
 
     # ── Matching logic ──
     def _check_folders(self):
-        """Return list of configured folders that are no longer reachable."""
-        return [f for f in self.jpg_folders + self.raw_folders if not os.path.isdir(f)]
+        """Return list of sources that are no longer reachable."""
+        missing = []
+        for x in self.jpg_sources + self.raw_sources:
+            if x['type'] == 'folder' and not os.path.isdir(x['path']):
+                missing.append(x['path'])
+            elif x['type'] == 'files' and not any(os.path.isfile(f) for f in x['files']):
+                missing.append(self._source_label(x))
+        return missing
 
-    def _collect_jpg_files(self, settings, jpg_folders):
-        exts = {'.jpg', '.jpeg', '.png'}
-        exts |= parse_extensions(settings.get('jpg_extensions', ''))
-        files = []
-        for folder in jpg_folders:
-            files.extend(f for f in get_all_files_in_folder(folder)
-                         if os.path.splitext(f)[1].lower() in exts)
+    def _collect_jpg_files(self, settings, jpg_sources):
+        exts = self._exts('jpg', settings)
+        files, seen = [], set()
+        for x in jpg_sources:
+            if x['type'] == 'files':
+                cand = [f for f in x['files'] if os.path.isfile(f)]
+            else:
+                cand = [f for f in get_all_files_in_folder(x['path'])
+                        if os.path.splitext(f)[1].lower() in exts]
+            for f in cand:
+                if f not in seen:          # same image added twice → only once
+                    seen.add(f)
+                    files.append(f)
         return files
 
-    def _collect_raw_files(self, settings, raw_folders):
-        exts = set(RAW_EXTENSIONS)
-        exts |= parse_extensions(settings.get('raw_extensions', ''))
-        files = []
-        for folder in raw_folders:
-            files.extend(f for f in get_all_files_in_folder(folder)
-                         if os.path.splitext(f)[1].lower() in exts)
+    def _collect_raw_files(self, settings, raw_sources):
+        exts = self._exts('raw', settings)
+        files, seen = [], set()
+        for x in raw_sources:
+            for f in get_all_files_in_folder(x['path']):
+                if os.path.splitext(f)[1].lower() in exts and f not in seen:
+                    seen.add(f)
+                    files.append(f)
         return files
 
     def _precheck(self):
         if self._busy:
             return False
-        if not self.jpg_folders:
+        if not self.jpg_sources:
             if not self._quiet:
                 messagebox.showwarning("Notice", "Please add at least one JPG folder", parent=self.root)
             return False
@@ -1179,8 +1321,8 @@ class FindRawApp:
 
         # Snapshot state for the worker thread (never read Tk widgets from threads)
         settings = dict(self.settings)
-        jpg_folders = list(self.jpg_folders)
-        raw_folders = list(self.raw_folders)
+        jpg_folders = [dict(x) for x in self.jpg_sources]
+        raw_folders = [dict(x) for x in self.raw_sources]
 
         def worker():
             try:
@@ -1208,8 +1350,8 @@ class FindRawApp:
         self.status_label.config(text="EXIF matching...")
 
         settings = dict(self.settings)
-        jpg_folders = list(self.jpg_folders)
-        raw_folders = list(self.raw_folders)
+        jpg_folders = [dict(x) for x in self.jpg_sources]
+        raw_folders = [dict(x) for x in self.raw_sources]
         prev_results = list(self.results)
 
         def progress(c, t):
@@ -1466,9 +1608,14 @@ class FindRawApp:
     def run_selftest(self, base, result_file):
         import time
         self._quiet = True
-        self.jpg_folders = [os.path.join(base, 'jpg')]
+        if os.environ.get('JFR_SELFTEST_PICK'):
+            picked = [f for f in get_all_files_in_folder(os.path.join(base, 'jpg'))
+                      if f.lower().endswith('.jpg')]
+            self.jpg_sources = [self._new_source('files', os.path.join(base, 'jpg'), picked)]
+        else:
+            self.jpg_folders = [os.path.join(base, 'jpg')]
         self.raw_folders = [os.path.join(base, 'raw')]
-        self._refresh_both_lists()
+        self._recount_all()
         self.out_entry.delete(0, tk.END)
         self.out_entry.insert(0, os.path.join(base, 'out'))
         st = {'stage': 'match', 't0': time.time()}
@@ -1539,6 +1686,13 @@ def main():
                 pass
     root = tk.Tk()
     app = FindRawApp(root)
+    demo = os.environ.get('JFR_PREFILL_DIR')          # CI screenshots only
+    if demo:
+        jd = os.path.join(demo, 'jpg')
+        app._add_source('jpg', app._new_source('folder', jd))
+        app._add_source('jpg', app._new_source('files', jd, [os.path.join(jd, 'DSC_0001.jpg'),
+                                                             os.path.join(jd, 'holiday.jpg')]))
+        app._add_source('raw', app._new_source('folder', os.path.join(demo, 'raw')))
     selftest_dir = os.environ.get('JFR_SELFTEST_DIR')
     if selftest_dir:
         app.run_selftest(selftest_dir, os.environ.get('JFR_SELFTEST_RESULT',

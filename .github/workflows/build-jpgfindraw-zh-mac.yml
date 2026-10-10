@@ -70,7 +70,8 @@ jobs:
       - name: Screenshot of the running app (real macOS rendering)
         continue-on-error: true
         run: |
-          "./dist/JPG查找RAW.app/Contents/MacOS/JpgFindRawCN" &
+          D=$(mktemp -d); python3 ../jpg-find-raw-en/tests/make_testdata.py "$D"
+          JFR_PREFILL_DIR="$D" "./dist/JPG查找RAW.app/Contents/MacOS/JpgFindRawCN" &
           PID=$!
           sleep 8
           screencapture -x /tmp/zh_screenshot.png || true

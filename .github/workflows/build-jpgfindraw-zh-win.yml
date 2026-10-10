@@ -36,10 +36,20 @@ jobs:
           for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
           taskkill //IM "JPG查找RAW.exe" //F 2>/dev/null || true
           python ../jpg-find-raw-en/tests/make_testdata.py check "$T/result.json"
+      - name: Self-test packaged EXE (picked images)
+        run: |
+          T="$RUNNER_TEMP/jfrtest2"; rm -rf "$T"
+          python ../jpg-find-raw-en/tests/make_testdata.py "$T"
+          JFR_SELFTEST_PICK=1 JFR_SELFTEST_DIR="$(cygpath -w "$T")" "./dist/JPG查找RAW.exe" &
+          for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
+          taskkill //IM "JPG查找RAW.exe" //F 2>/dev/null || true
+          python ../jpg-find-raw-en/tests/make_testdata.py check "$T/result.json"
       - name: Screenshot
         continue-on-error: true
         shell: pwsh
         run: |
+          python ..\jpg-find-raw-en\tests\make_testdata.py "$env:RUNNER_TEMP\jfr_demo"
+          $env:JFR_PREFILL_DIR = "$env:RUNNER_TEMP\jfr_demo"
           Start-Process ".\dist\JPG查找RAW.exe"
           Start-Sleep -Seconds 10
           Add-Type -AssemblyName System.Windows.Forms,System.Drawing

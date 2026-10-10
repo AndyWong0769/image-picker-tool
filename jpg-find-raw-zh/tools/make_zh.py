@@ -120,6 +120,35 @@ T = [
  ('self._show_error("Export Finished With Errors", msg)', 'self._show_error("导出完成（有错误）", msg)'),
  ('self._show_info("Done", msg)', 'self._show_info("完成", msg)'),
 ]
+# source-list texts (counts / totals / picked images)
+R('''_SRC_TXT = {
+    'jpg_count': "{n} images",
+    'raw_count': "{n} RAW files",
+    'jpg_total': "Total: {n} images",
+    'raw_total': "Total: {n} RAW files",
+    'counting': "counting...",
+    'missing': "not found",
+    'picked_many': "{n} picked images: {first} ... ({folder})",
+    'picked_one': "{first} ({folder})",
+    'add_images': "+ Add Images",
+    'pick_title': "Select JPG images (multi-select, Ctrl+A / Cmd+A selects all)",
+    'img_type': "Images",
+    'all_type': "All files",
+}''', '''_SRC_TXT = {
+    'jpg_count': "{n} 张",
+    'raw_count': "{n} 个",
+    'jpg_total': "共 {n} 张",
+    'raw_total': "共 {n} 个",
+    'counting': "统计中...",
+    'missing': "找不到文件夹",
+    'picked_many': "已选 {n} 张图片：{first} 等（{folder}）",
+    'picked_one': "{first}（{folder}）",
+    'add_images': "+ 选择图片",
+    'pick_title': "选择 JPG 图片（可多选，Ctrl+A / ⌘A 全选）",
+    'img_type': "图片",
+    'all_type': "所有文件",
+}''')
+
 for item in T:
     R(*item)
 open(dst, 'w', encoding='utf-8').write(s)
