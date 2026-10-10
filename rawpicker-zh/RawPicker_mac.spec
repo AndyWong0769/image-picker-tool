@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # RawPicker 图片筛选工具 — macOS universal2 .app (onedir)
-APP_VERSION = '3.0.1'
+APP_VERSION = '3.0.2'
 
 a = Analysis(['RawPicker.py'], pathex=[], binaries=[], datas=[], hiddenimports=[], hookspath=[],
              runtime_hooks=[], excludes=['PIL', 'numpy', 'matplotlib', 'scipy', 'tkinter.test', 'unittest', 'pydoc'],

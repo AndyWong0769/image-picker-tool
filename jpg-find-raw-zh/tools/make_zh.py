@@ -78,12 +78,12 @@ T = [
  # status
  ('text="Scanning folders..."', 'text="正在扫描文件夹..."'),
  ('"No JPG files found"', '"未找到 JPG 文件"', 2),
- ("{'text': f\"Found {len(jpg_files)} JPG files, scanning RAW folders...\"}", "{'text': f\"找到 {len(jpg_files)} 个 JPG 文件，正在扫描 RAW 文件夹...\"}"),
- ("{'text': f\"Matching {len(jpg_files)} JPG with {len(raw_files)} RAW files...\"}", "{'text': f\"正在匹配 {len(jpg_files)} 个 JPG 与 {len(raw_files)} 个 RAW...\"}"),
+ ("{'text': f\"Found {len(jpg_files)} JPG files, scanning RAW folders...\"}", "{'text': f\"找到 {len(jpg_files)} 张 JPG，正在扫描 RAW 文件夹...\"}"),
+ ("{'text': f\"Matching {len(jpg_files)} JPG with {len(raw_files)} RAW files...\"}", "{'text': f\"正在匹配 {len(jpg_files)} 张 JPG 与 {len(raw_files)} 张 RAW...\"}"),
  ('"Filename matching complete"', '"文件名匹配完成"'),
  ('"Matching failed"', '"匹配失败"'),
  ('text="EXIF matching..."', 'text="EXIF 匹配中..."'),
- ("{'text': f\"Reading EXIF: {c}/{t} RAW files\"}", "{'text': f\"正在读取 EXIF：{c}/{t} 个 RAW 文件\"}"),
+ ("{'text': f\"Reading EXIF: {c}/{t} RAW files\"}", "{'text': f\"正在读取 EXIF：{c}/{t} 张 RAW\"}"),
  ('"EXIF matching complete"', '"EXIF 匹配完成"'),
  ('"EXIF matching failed"', '"EXIF 匹配失败"'),
  ('''f"{exc}\\n\\nIf your photos are on an external drive, make sure it is "
@@ -136,9 +136,9 @@ R('''_SRC_TXT = {
     'all_type': "All files",
 }''', '''_SRC_TXT = {
     'jpg_count': "{n} 张",
-    'raw_count': "{n} 个",
+    'raw_count': "{n} 张",
     'jpg_total': "共 {n} 张",
-    'raw_total': "共 {n} 个",
+    'raw_total': "共 {n} 张",
     'counting': "统计中...",
     'missing': "找不到文件夹",
     'picked_many': "已选 {n} 张图片：{first} 等（{folder}）",

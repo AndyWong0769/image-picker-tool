@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw-ZH"          # config folder name
 APP_DISPLAY = "JPG 查找 RAW"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -43,9 +43,9 @@ _IS_WINDOWS = sys.platform.startswith('win')
 # Texts for the JPG / RAW source lists
 _SRC_TXT = {
     'jpg_count': "{n} 张",
-    'raw_count': "{n} 个",
+    'raw_count': "{n} 张",
     'jpg_total': "共 {n} 张",
-    'raw_total': "共 {n} 个",
+    'raw_total': "共 {n} 张",
     'counting': "统计中...",
     'missing': "找不到文件夹",
     'picked_many': "已选 {n} 张图片：{first} 等（{folder}）",
@@ -1347,9 +1347,9 @@ class FindRawApp:
                 if not jpg_files:
                     self._post(self._on_match_done, [], "未找到JPG文件")
                     return
-                self._post(self.status_label.config, {'text': f"找到 {len(jpg_files)} 个 JPG 文件，正在扫描 RAW 文件夹..."})
+                self._post(self.status_label.config, {'text': f"找到 {len(jpg_files)} 张 JPG，正在扫描 RAW 文件夹..."})
                 raw_files = self._collect_raw_files(settings, raw_folders)
-                self._post(self.status_label.config, {'text': f"正在匹配 {len(jpg_files)} 个 JPG 与 {len(raw_files)} 个 RAW..."})
+                self._post(self.status_label.config, {'text': f"正在匹配 {len(jpg_files)} 张 JPG 与 {len(raw_files)} 张 RAW..."})
                 results = match_jpg_to_raw(jpg_files, raw_files, settings)
                 self._post(self._on_match_done, results, "文件名匹配完成")
             except Exception as e:
@@ -1372,7 +1372,7 @@ class FindRawApp:
         prev_results = list(self.results)
 
         def progress(c, t):
-            self._post(self.status_label.config, {'text': f"正在读取 EXIF：{c}/{t} 个 RAW 文件"})
+            self._post(self.status_label.config, {'text': f"正在读取 EXIF：{c}/{t} 张 RAW"})
 
         def worker():
             try:

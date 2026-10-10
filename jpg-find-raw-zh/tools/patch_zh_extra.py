@@ -79,5 +79,8 @@ for w in W:
 
 # (Tk console suppression, version and self-test console report now live in the English source)
 
+# 中文版单独的版本号（仅中文文字修正时使用）
+R('APP_VERSION = "2.2.0"', 'APP_VERSION = "2.2.1"')
+
 open(p, 'w', encoding='utf-8').write(s)
 print("ok")

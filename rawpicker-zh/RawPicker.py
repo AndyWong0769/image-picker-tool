@@ -31,7 +31,7 @@ from tkinter import filedialog, messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_TITLE = "RawPicker 图片筛选工具"
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.0.2"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -347,7 +347,7 @@ class FilterWorker:
                 self._send("cancelled", 0)
                 return
 
-            self._send("status", f"正在匹配：{len(jpg_image_files)} 张 JPG，{len(raw_files)} 个 RAW...")
+            self._send("status", f"正在匹配：{len(jpg_image_files)} 张 JPG，{len(raw_files)} 张 RAW...")
             matched, matched_jpg_set = match_files(jpg_image_files, raw_files,
                                                    self.output_path, self._cancelled)
             if self._cancelled():
@@ -734,7 +734,7 @@ class RawPickerApp:
                 if n is None:
                     label.configure(text="无法读取该文件夹", fg=self.RED)
                 else:
-                    what = "张 JPG 图片" if kind == 'jpg' else "个 RAW 文件"
+                    what = "张 JPG 图片" if kind == 'jpg' else "张 RAW"
                     label.configure(text=f"共 {n} {what}", fg=self.ACCENT)
         except queue.Empty:
             pass
@@ -829,7 +829,7 @@ class RawPickerApp:
                     return
                 elif kind == "cancelled":
                     self.progress['value'] = 0
-                    self.result_label.configure(text=f"已取消（已复制 {msg[1]} 个文件）", fg=self.ASH)
+                    self.result_label.configure(text=f"已取消（已复制 {msg[1]} 张）", fg=self.ASH)
                     self.status_label.configure(text="就绪")
                     self._end_worker()
                     return
@@ -860,18 +860,18 @@ class RawPickerApp:
         copied, failed, unmatched = s['copied'], s['failed'], s['unmatched']
         matched_jpg = s['total_jpg'] - len(unmatched)
         self.result_label.configure(
-            text=f"完成：复制了 {copied} 个 RAW 文件" + (f"，{len(failed)} 个失败" if failed else ""),
+            text=f"完成：复制了 {copied} 张 RAW" + (f"，{len(failed)} 张失败" if failed else ""),
             fg=self.RED if failed else self.GREEN)
         self.status_label.configure(text="就绪")
         if self._quiet:
             return
         lines = [f"JPG 共 {s['total_jpg']} 张，匹配到 {matched_jpg} 张",
-                 f"成功复制 RAW 文件：{copied} 个"]
+                 f"成功复制 RAW：{copied} 张"]
         if failed:
-            lines.append(f"\n复制失败 {len(failed)} 个：")
+            lines.append(f"\n复制失败 {len(failed)} 张：")
             lines += failed[:8]
             if len(failed) > 8:
-                lines.append(f"... 还有 {len(failed) - 8} 个")
+                lines.append(f"... 还有 {len(failed) - 8} 张")
         if unmatched:
             lines.append(f"\n未匹配的 JPG：{len(unmatched)} 张")
             lines.append(f"详细列表已保存到：\n{UNMATCHED_FILES}")
