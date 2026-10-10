@@ -9,6 +9,7 @@ v3.1：
   - 分两步：先「开始匹配」列出 JPG ↔ RAW 对照表（可勾选），再「导出勾选的RAW」
   - 输出文件夹不填：默认导出到 JPG 目录下的 raw 文件夹（没有就新建，有就直接放进去）
   - 输出文件夹里已有同名文件：弹窗选择 覆盖 / 跳过 / 取消
+  - 不再生成 unmatched_files.txt（未匹配的直接在表格里标红）
   - 中文过滤修复：N-D810 (4)副本.jpg 现在能匹配 N-D810 (4).NEF
 
 v3.0 相比旧版：
@@ -46,23 +47,6 @@ _IS_WINDOWS = sys.platform.startswith('win')
 # ============================================================
 # 常量 / 平台
 # ============================================================
-
-def _get_config_dir():
-    if _IS_MACOS:
-        base = os.path.expanduser("~/Library/Application Support")
-    elif _IS_WINDOWS:
-        base = os.environ.get("APPDATA", os.path.expanduser("~"))
-    else:
-        base = os.path.expanduser("~/.config")
-    d = os.path.join(base, "JpgChooseraw")
-    try:
-        os.makedirs(d, exist_ok=True)
-    except Exception:
-        d = os.path.expanduser("~")
-    return d
-
-
-UNMATCHED_FILES = os.path.join(_get_config_dir(), "unmatched_files.txt")
 
 JPG_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 # RAW 文件夹保留: RAW文件 + JPG（有时小JPG在大JPG文件夹里需要匹配）；过滤 XMP、txt 等
@@ -276,18 +260,6 @@ def format_seconds(seconds):
     return f"{seconds // 60}:{seconds % 60:02d}"
 
 
-def write_unmatched_list(unmatched):
-    try:
-        with open(UNMATCHED_FILES, "w", encoding="utf-8") as f:
-            f.write(f"以下 {len(unmatched)} 张 JPG 没有找到对应的 RAW 文件：\n")
-            f.write("=" * 50 + "\n")
-            for jpg_file in unmatched:
-                f.write(jpg_file + "\n")
-        return True
-    except Exception:
-        return False
-
-
 # ============================================================
 # 后台工作线程（只通过 queue 与界面通信，不直接操作界面）
 # ============================================================
@@ -359,9 +331,6 @@ class MatchWorker(_Worker):
         if self._cancelled():
             self._send("cancelled")
             return
-        unmatched = [r['jpg'] for r in rows if not r['raws']]
-        if unmatched:
-            write_unmatched_list(unmatched)
         self._send("matched", rows, len(raw_files))
 
 
@@ -636,7 +605,7 @@ class RawPickerApp:
         self.matched_label.pack(side=tk.LEFT)
         self.unmatched_label = tk.Label(cnt, text="0 未匹配", bg=bg, fg=self.RED, font=F(10, True))
         self.unmatched_label.pack(side=tk.LEFT, padx=(14, 0))
-        self.unmatched_label.bind('<Button-1>', lambda e: self._open_unmatched())
+        self.unmatched_label.bind('<Button-1>', lambda e: self._goto_unmatched())
         self.export_btn = self._btn(brow, "导出勾选的RAW", self._start_export, 'accent',
                                     font=F(11, True), padx=28, pady=8)
         self.export_btn.grid(row=0, column=1)
@@ -885,9 +854,18 @@ class RawPickerApp:
         else:
             messagebox.showerror(title, msg, parent=self.root)
 
-    def _open_unmatched(self):
-        if any(not r['raws'] for r in self.rows) and os.path.exists(UNMATCHED_FILES):
-            open_with_system(UNMATCHED_FILES)
+    def _goto_unmatched(self):
+        """点“未匹配”：依次跳到没找到 RAW 的那几行"""
+        miss = [it for it in self.tree.get_children() if not self.item_row[it]['raws']]
+        if not miss:
+            return
+        cur = self.tree.selection()
+        nxt = miss[0]
+        if cur and cur[0] in miss:
+            nxt = miss[(miss.index(cur[0]) + 1) % len(miss)]
+        self.tree.selection_set(nxt)
+        self.tree.see(nxt)
+        self.tree.focus(nxt)
 
     # ---------- 第一步：匹配 ----------
     def _start_match(self):
@@ -958,7 +936,7 @@ class RawPickerApp:
                                        cursor="hand2" if unmatched else "")
         self.stats_label.configure(text=f"{len(rows)} JPG  |  {matched} 匹配  |  {unmatched} 未匹配")
         self.status_label.configure(
-            text="文件名匹配完成" + ("　（点“未匹配”可打开未匹配列表）" if unmatched else ""))
+            text="文件名匹配完成" + ("　（点下方红色“未匹配”可逐个定位）" if unmatched else ""))
         self._update_selected()
 
     def _update_selected(self):
