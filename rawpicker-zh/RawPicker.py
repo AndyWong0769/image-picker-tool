@@ -31,7 +31,7 @@ from tkinter import filedialog, messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_TITLE = "RawPicker 图片筛选工具"
-APP_VERSION = "3.0.2"
+APP_VERSION = "3.0.3"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -111,29 +111,6 @@ def _detect_copy_workers(src_dir, dst_dir):
 def is_hidden_file(filepath):
     filename = os.path.basename(filepath)
     return filename.startswith('.') or filename.startswith('~')
-
-
-def extract_possible_raw_names(filename):
-    """从文件名中提取所有可能的RAW文件名候选（与旧版相同）"""
-    name_without_ext = os.path.splitext(filename)[0]
-    camera_patterns = re.findall(r'[A-Z_]*\d+[A-Z]*', name_without_ext)
-    all_patterns = re.findall(r'[a-zA-Z0-9_]{2,}', name_without_ext)
-    number_patterns = re.findall(r'\d{4,}', name_without_ext)
-
-    candidates = set()
-    for pattern in camera_patterns:
-        if len(pattern) >= 4:
-            candidates.add(pattern)
-    for pattern in all_patterns:
-        if len(pattern) >= 4 and not re.match(r'^[一-龥]+$', pattern):
-            candidates.add(pattern)
-    for pattern in number_patterns:
-        candidates.add(pattern)
-    if not candidates:
-        end_match = re.search(r'([a-zA-Z0-9_]+)$', name_without_ext)
-        if end_match:
-            candidates.add(end_match.group(1))
-    return list(candidates)
 
 
 _TOKEN_RE = re.compile(r'[A-Za-z0-9_]+')
@@ -358,12 +335,10 @@ class FilterWorker:
             if unmatched:
                 try:
                     with open(UNMATCHED_FILES, "w", encoding="utf-8") as f:
-                        f.write("以下 JPG 文件没有找到对应的 RAW 文件:\n" + "=" * 50 + "\n")
+                        f.write(f"以下 {len(unmatched)} 张 JPG 没有找到对应的 RAW 文件：\n")
+                        f.write("=" * 50 + "\n")
                         for jpg_file in unmatched:
-                            cands = extract_possible_raw_names(os.path.basename(jpg_file))
-                            f.write(f"JPG文件: {jpg_file}\n")
-                            f.write(f"  可能匹配的RAW名称: {', '.join(cands) if cands else '无'}\n")
-                            f.write("-" * 50 + "\n")
+                            f.write(jpg_file + "\n")
                 except Exception:
                     pass
 
