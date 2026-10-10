@@ -34,7 +34,7 @@ from tkinter import ttk, filedialog, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw-ZH"          # config folder name
-APP_DISPLAY = "JPG查找RAW"
+APP_DISPLAY = "JPG 查找 RAW"
 APP_VERSION = "2.1.2"
 
 _IS_MACOS = sys.platform == 'darwin'
@@ -163,8 +163,13 @@ def parse_extensions(ext_str: str) -> set:
 
 
 def extract_possible_raw_names(filename: str,
-                               prefix_filters: list = None, suffix_filters: list = None) -> list:
-    """Extract possible RAW filename patterns from a JPG filename"""
+                               prefix_filters: list = None, suffix_filters: list = None,
+                               filter_chinese: bool = True) -> list:
+    """从 JPG 文件名提取可能的 RAW 文件名
+
+    filter_chinese=True : 额外提取字母/数字/下划线片段参与匹配（忽略纯中文部分）
+    filter_chinese=False: 不提取片段，只用完整文件名（含中文）和 3 位以上数字匹配
+    """
     name_without_ext = os.path.splitext(filename)[0]
 
     if prefix_filters or suffix_filters:
@@ -178,9 +183,10 @@ def extract_possible_raw_names(filename: str,
     number_patterns = re.findall(r'\d{3,}', name_without_ext)
     candidates = set()
     candidates.add(name_without_ext.lower())
-    all_patterns = re.findall(r'[a-zA-Z0-9_]{2,}', name_without_ext)
-    for p in all_patterns:
-        candidates.add(p.lower())
+    if filter_chinese:
+        # 过滤中文：提取字母数字下划线片段，忽略纯中文
+        for p in re.findall(r'[a-zA-Z0-9_]{2,}', name_without_ext):
+            candidates.add(p.lower())
     for p in number_patterns:
         candidates.add(p.lower())
     return list(candidates)
@@ -190,6 +196,7 @@ def match_jpg_to_raw(jpg_files: list, raw_files: list, settings: dict = None) ->
     """Match JPG files to RAW files by filename"""
     jpg_prefix = parse_filters(settings.get('jpg_prefix_filters', '')) if settings else []
     jpg_suffix = parse_filters(settings.get('jpg_suffix_filters', '')) if settings else []
+    filter_chinese = settings.get('filter_chinese', True) if settings else True
 
     raw_dict = {}
     for f in raw_files:
@@ -217,7 +224,7 @@ def match_jpg_to_raw(jpg_files: list, raw_files: list, settings: dict = None) ->
 
         # 2. Candidate match (longest candidate first = most specific)
         if not found_raw:
-            candidates = extract_possible_raw_names(jpg_filename, jpg_prefix, jpg_suffix)
+            candidates = extract_possible_raw_names(jpg_filename, jpg_prefix, jpg_suffix, filter_chinese)
             for cand in sorted(candidates, key=len, reverse=True):
                 if cand in raw_dict:
                     found_raw = raw_dict[cand]
@@ -507,6 +514,7 @@ class FindRawApp:
         self._last_export = None    # (count, failed, folders) of the last export
 
         self.settings = {
+            'filter_chinese': True,       # 过滤中文（匹配时忽略纯中文字符）
             'create_raw_folder': True,
             'export_method': 'copy',
             'jpg_extensions': '',
@@ -655,7 +663,7 @@ class FindRawApp:
         tk.Label(title_row, text=f"v{APP_VERSION}", bg=bg, fg='#5a5a70',
                  font=F(8)).pack(side=tk.LEFT, padx=(8, 0), pady=(6, 0))
 
-        tk.Label(main_frame, text="支持多个 JPG 文件夹与多个 RAW 文件夹进行匹配，支持文件名匹配和 EXIF 拍摄时间匹配。",
+        tk.Label(main_frame, text="支持多个 JPG 文件夹和 RAW 文件夹进行匹配，支持文件名匹配和 EXIF 时间匹配",
                  bg=bg, fg=ash, font=F(9)).pack(anchor="w", pady=(2, 10))
 
         folder_card = tk.Frame(main_frame, bg=surface, highlightbackground=border,
@@ -744,7 +752,7 @@ class FindRawApp:
         self._accent_button(out_row, "浏览", self._browse_out,
                             font=F(9, True), padx=28, pady=4).pack(side=tk.RIGHT)
 
-        self._out_placeholder = "留空 = 导出到各 JPG 目录下的 raw 子文件夹"
+        self._out_placeholder = "不填写默认导出到jpg目录下"
         self.out_entry.insert(0, self._out_placeholder)
         self.out_entry.config(fg='#5a5a70')
         self.out_entry.bind('<FocusIn>', self._on_out_focus_in)
@@ -851,14 +859,14 @@ class FindRawApp:
 
         left_frame = tk.Frame(bottom_row, bg=bg)
         left_frame.pack(side=tk.LEFT)
-        self.matched_label = tk.Label(left_frame, text="已匹配 0", bg=bg,
+        self.matched_label = tk.Label(left_frame, text="0 已匹配", bg=bg,
                                       fg=self.SUCCESS, font=F(9, True))
         self.matched_label.pack(side=tk.LEFT)
-        self.unmatched_label = tk.Label(left_frame, text="未匹配 0", bg=bg,
+        self.unmatched_label = tk.Label(left_frame, text="0 未匹配", bg=bg,
                                         fg=self.ERROR, font=F(9, True))
         self.unmatched_label.pack(side=tk.LEFT, padx=(12, 0))
 
-        self.export_btn = self._accent_button(bottom_row, "导出勾选的 RAW", self._export_selected,
+        self.export_btn = self._accent_button(bottom_row, "导出勾选的RAW", self._export_selected,
                                               font=F(10, True), padx=20, pady=10)
         self.export_btn.pack(side=tk.LEFT, expand=True)
 
@@ -926,7 +934,7 @@ class FindRawApp:
         listbox.selection_set(sel)
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="在访达中显示" if _IS_MACOS else "打开文件夹", command=open_cmd)
-        menu.add_command(label="移除此路径", command=remove_cmd)
+        menu.add_command(label="删除此路径", command=remove_cmd)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1012,8 +1020,14 @@ class FindRawApp:
         frame = tk.Frame(dlg, bg=bg, padx=16, pady=14)
         frame.pack(fill=tk.BOTH, expand=True)
 
+        filter_chinese_var = tk.BooleanVar(value=self.settings.get('filter_chinese', True))
+        tk.Checkbutton(frame, text="过滤中文（匹配时忽略纯中文字符）",
+                       variable=filter_chinese_var, bg=bg, fg=ink, selectcolor=surface,
+                       activebackground=bg, activeforeground=ink, highlightthickness=0, bd=0,
+                       font=F(10), wraplength=420, justify=tk.LEFT).pack(anchor="w", pady=(0, 12))
+
         create_raw_var = tk.BooleanVar(value=self.settings.get('create_raw_folder', True))
-        tk.Checkbutton(frame, text="创建 raw 子文件夹（导出到 JPG 目录下的 raw 文件夹）",
+        tk.Checkbutton(frame, text="新建raw文件夹（导出时在JPG目录下创建raw子文件夹）",
                        variable=create_raw_var, bg=bg, fg=ink, selectcolor=surface,
                        activebackground=bg, activeforeground=ink, highlightthickness=0, bd=0,
                        font=F(10), wraplength=420, justify=tk.LEFT).pack(anchor="w", pady=(0, 16))
@@ -1039,7 +1053,7 @@ class FindRawApp:
                  font=F(10, True)).pack(side=tk.LEFT)
         self._make_info_icon(ext_header_row, self._get_formats_tooltip_text()).pack(side=tk.LEFT, padx=(6, 0))
 
-        tk.Label(frame, text="在默认格式之外，可额外添加扩展名。",
+        tk.Label(frame, text="下方可添加额外扩展名格式（在默认格式之外）。",
                  bg=bg, fg='#5a5a70', font=F(8)).pack(anchor="w", pady=(0, 10))
 
         def entry(label, key, pady_after=10):
@@ -1059,13 +1073,13 @@ class FindRawApp:
 
         tk.Frame(frame, bg=border, height=1).pack(fill=tk.X, pady=(0, 14))
 
-        tk.Label(frame, text="JPG 文件名过滤（多个关键词用逗号分隔）",
+        tk.Label(frame, text="JPG 文件名过滤（多个关键词用逗号隔开）",
                  bg=bg, fg=accent, font=F(10, True)).pack(anchor="w", pady=(0, 10))
 
         jpg_prefix_entry = entry("JPG 前缀过滤：", 'jpg_prefix_filters')
         jpg_suffix_entry = entry("JPG 后缀过滤：", 'jpg_suffix_filters', pady_after=6)
 
-        tk.Label(frame, text="示例：_DSC0531.jpg 前缀填 _ → DSC0531 可匹配 DSC0531.CR2",
+        tk.Label(frame, text="示例：_DSC0531.jpg 前缀输入 _  →  DSC0531 匹配 DSC0531.CR2",
                  bg=bg, fg='#5a5a70', font=F(8)).pack(anchor="w", pady=(0, 4))
 
         btn_row = tk.Frame(frame, bg=bg)
@@ -1079,6 +1093,7 @@ class FindRawApp:
             dlg.destroy()
 
         def save_and_close():
+            self.settings['filter_chinese'] = filter_chinese_var.get()
             self.settings['create_raw_folder'] = create_raw_var.get()
             self.settings['export_method'] = export_var.get()
             self.settings['jpg_extensions'] = jpg_ext_entry.get().strip()
@@ -1175,7 +1190,7 @@ class FindRawApp:
             return
 
         self._set_busy(True)
-        self.status_label.config(text="正在扫描文件夹...")
+        self.status_label.config(text="扫描中...")
         self.tree.delete(*self.tree.get_children())
         self.results = []
 
@@ -1188,7 +1203,7 @@ class FindRawApp:
             try:
                 jpg_files = self._collect_jpg_files(settings, jpg_folders)
                 if not jpg_files:
-                    self._post(self._on_match_done, [], "未找到 JPG 文件")
+                    self._post(self._on_match_done, [], "未找到JPG文件")
                     return
                 self._post(self.status_label.config, {'text': f"找到 {len(jpg_files)} 个 JPG 文件，正在扫描 RAW 文件夹..."})
                 raw_files = self._collect_raw_files(settings, raw_folders)
@@ -1207,7 +1222,7 @@ class FindRawApp:
             return
 
         self._set_busy(True)
-        self.status_label.config(text="EXIF 匹配中...")
+        self.status_label.config(text="EXIF匹配中...")
 
         settings = dict(self.settings)
         jpg_folders = list(self.jpg_folders)
@@ -1221,7 +1236,7 @@ class FindRawApp:
             try:
                 jpg_files = self._collect_jpg_files(settings, jpg_folders)
                 if not jpg_files:
-                    self._post(self._on_match_done, [], "未找到 JPG 文件")
+                    self._post(self._on_match_done, [], "未找到JPG文件")
                     return
                 raw_files = self._collect_raw_files(settings, raw_folders)
 
@@ -1239,7 +1254,7 @@ class FindRawApp:
                                         progress_cb=progress)
                 matched_dict = {r['jpg_path']: r for r in matched}
                 final = [matched_dict.get(r['jpg_path'], r) for r in base_results]
-                self._post(self._on_match_done, final, "EXIF 匹配完成")
+                self._post(self._on_match_done, final, "EXIF匹配完成")
             except Exception as e:
                 traceback.print_exc()
                 self._post(self._on_worker_error, "EXIF 匹配失败", e)
@@ -1256,9 +1271,9 @@ class FindRawApp:
         self.results = results
         matched = sum(1 for r in results if r['raw_path'])
         unmatched = len(results) - matched
-        self.matched_label.config(text=f"已匹配 {matched}")
-        self.unmatched_label.config(text=f"未匹配 {unmatched}")
-        self.stats_label.config(text=f"共 {len(results)} 个 JPG | 已匹配 {matched} | 未匹配 {unmatched}")
+        self.matched_label.config(text=f"{matched} 已匹配")
+        self.unmatched_label.config(text=f"{unmatched} 未匹配")
+        self.stats_label.config(text=f"{len(results)} JPG | {matched} 匹配 | {unmatched} 未匹配")
         self.status_label.config(text=status)
 
         self.tree.delete(*self.tree.get_children())
@@ -1319,7 +1334,7 @@ class FindRawApp:
         if self._busy:
             return
         if not self.selected_rows:
-            self._show_info("提示", "没有勾选任何 RAW 文件")
+            self._show_info("提示", "没有选中的RAW文件")
             return
 
         out_dir = self.out_entry.get().strip()
@@ -1355,7 +1370,7 @@ class FindRawApp:
                 {'src': raw_path, 'dst': os.path.join(target_folder, basename), 'basename': basename})
 
         if not folder_files:
-            self._show_info("提示", "没有可导出的 RAW 文件")
+            self._show_info("提示", "没有可导出的RAW文件")
             return
 
         conflict_files = []
@@ -1369,8 +1384,8 @@ class FindRawApp:
         if conflict_files and not self._quiet:
             preview = ', '.join(conflict_files[:10])
             if len(conflict_files) > 10:
-                preview += f' ... 等共 {len(conflict_files)} 个'
-            msg = (f"目标文件夹中已有 {len(conflict_files)} 个同名文件："
+                preview += f' ...等共 {len(conflict_files)} 个'
+            msg = (f"目标文件夹已有 {len(conflict_files)} 个同名文件："
                    f"\n\n{preview}\n\n是否覆盖？")
             if not messagebox.askyesno("覆盖确认", msg, parent=self.root):
                 return
