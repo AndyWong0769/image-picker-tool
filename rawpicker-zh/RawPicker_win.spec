@@ -1,0 +1,32 @@
+# -*- mode: python ; coding: utf-8 -*-
+# RawPicker 图片筛选工具 — Windows 单文件 exe
+APP_VERSION = '3.0.0'
+_v = tuple(int(x) for x in APP_VERSION.split('.')) + (0,)
+
+from PyInstaller.utils.win32.versioninfo import (
+    VSVersionInfo, FixedFileInfo, StringFileInfo, StringTable, StringStruct, VarFileInfo, VarStruct)
+
+version_info = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=_v, prodvers=_v, mask=0x3f, flags=0x0, OS=0x40004,
+                      fileType=0x1, subtype=0x0, date=(0, 0)),
+    kids=[
+        StringFileInfo([StringTable('080404B0', [
+            StringStruct('CompanyName', 'RawPicker'),
+            StringStruct('FileDescription', 'RawPicker 图片筛选工具'),
+            StringStruct('FileVersion', APP_VERSION),
+            StringStruct('InternalName', 'RawPicker'),
+            StringStruct('OriginalFilename', 'RawPicker.exe'),
+            StringStruct('ProductName', 'RawPicker 图片筛选工具'),
+            StringStruct('ProductVersion', APP_VERSION),
+        ])]),
+        VarFileInfo([VarStruct('Translation', [2052, 1200])]),
+    ],
+)
+
+a = Analysis(['RawPicker.py'], pathex=[], binaries=[], datas=[('app.ico', '.')],
+             hiddenimports=[], hookspath=[], runtime_hooks=[],
+             excludes=['PIL', 'numpy', 'matplotlib', 'scipy', 'tkinter.test', 'unittest', 'pydoc'],
+             noarchive=False)
+pyz = PYZ(a.pure)
+exe = EXE(pyz, a.scripts, a.binaries, a.datas, [], name='RawPicker', debug=False, strip=False,
+          upx=False, console=False, icon='app.ico', version=version_info)

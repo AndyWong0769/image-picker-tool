@@ -1,0 +1,127 @@
+name: Build RawPicker 图片筛选工具 (中文版) — Windows EXE + macOS DMG
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'rawpicker-zh/**'
+      - '.github/workflows/build-rawpicker-zh.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: rawpicker-zh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+      - name: Install PyInstaller
+        run: pip install "pyinstaller>=6.11,<7"
+      - name: Build EXE
+        run: pyinstaller --noconfirm --clean RawPicker_win.spec && ls -la dist
+      - name: Self-test (folder mode + picked-images mode)
+        run: |
+          for MODE in folder files; do
+            T="$RUNNER_TEMP/rp_$MODE"; rm -rf "$T"
+            python tests/make_testdata.py "$T"
+            RP_SELFTEST_MODE=$MODE RP_SELFTEST_DIR="$(cygpath -w "$T")" ./dist/RawPicker.exe &
+            for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
+            taskkill //IM RawPicker.exe //F 2>/dev/null || true
+            python tests/make_testdata.py check "$T/result.json" $MODE
+          done
+      - name: Screenshot
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python tests/make_testdata.py "$env:RUNNER_TEMP\rp_demo"
+          $env:RP_PREFILL_DIR = "$env:RUNNER_TEMP\rp_demo"
+          Start-Process .\dist\RawPicker.exe
+          Start-Sleep -Seconds 10
+          Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:RUNNER_TEMP\rp_windows.png")
+          Stop-Process -Name RawPicker -Force -ErrorAction SilentlyContinue
+      - name: Publish to 'rawpicker-win-build' branch
+        if: github.ref_type == 'branch'
+        run: |
+          P="$RUNNER_TEMP/pub"; rm -rf "$P"; mkdir "$P"
+          cp dist/RawPicker.exe "$P/"
+          cp "$RUNNER_TEMP/rp_windows.png" "$P/" 2>/dev/null || true
+          cd "$P"
+          git init -q -b rawpicker-win-build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA}" > BUILD_INFO.txt
+          git add . && git commit -q -m "RawPicker EXE ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" rawpicker-win-build
+
+  macos:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: rawpicker-zh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python.org universal2 Python + PyInstaller
+        run: |
+          curl -fsSL -o /tmp/python.pkg "https://www.python.org/ftp/python/3.13.7/python-3.13.7-macos11.pkg"
+          sudo installer -pkg /tmp/python.pkg -target /
+          /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m venv /tmp/venv
+          /tmp/venv/bin/pip install "pyinstaller>=6.11,<7"
+      - name: Build .app
+        run: |
+          /tmp/venv/bin/pyinstaller --noconfirm --clean RawPicker_mac.spec
+          lipo -archs dist/RawPicker.app/Contents/MacOS/RawPicker
+          codesign --verify --deep dist/RawPicker.app
+      - name: Self-test (Finder-style launch, Chinese system language, both modes)
+        run: |
+          defaults write -g AppleLanguages -array zh-Hans en
+          for MODE in folder files; do
+            T=$(mktemp -d)
+            python3 tests/make_testdata.py "$T"
+            open --env RP_SELFTEST_MODE=$MODE --env RP_SELFTEST_DIR="$T" dist/RawPicker.app
+            for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
+            pkill -f RawPicker.app/Contents/MacOS/RawPicker || true
+            sleep 2
+            python3 tests/make_testdata.py check "$T/result.json" $MODE
+          done
+          defaults delete -g AppleLanguages || true
+      - name: Screenshot
+        continue-on-error: true
+        run: |
+          T=$(mktemp -d); python3 tests/make_testdata.py "$T"
+          open --env RP_PREFILL_DIR="$T" dist/RawPicker.app
+          sleep 8
+          screencapture -x /tmp/rp_mac.png || true
+          pkill -f RawPicker.app/Contents/MacOS/RawPicker || true
+      - name: Create DMG
+        run: |
+          rm -rf dmgroot && mkdir dmgroot
+          cp -R dist/RawPicker.app dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create -volname "RawPicker" -srcfolder dmgroot -ov -format UDZO RawPicker_Installer.dmg
+      - name: Publish to 'rawpicker-mac-build' branch
+        if: github.ref_type == 'branch'
+        run: |
+          rm -rf /tmp/pub && mkdir /tmp/pub
+          cp RawPicker_Installer.dmg /tmp/pub/
+          cp /tmp/rp_mac.png /tmp/pub/ 2>/dev/null || true
+          cd /tmp/pub
+          git init -q -b rawpicker-mac-build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          echo "Built from ${GITHUB_SHA}" > BUILD_INFO.txt
+          git add . && git commit -q -m "RawPicker DMG ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" rawpicker-mac-build
