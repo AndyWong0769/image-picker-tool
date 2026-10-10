@@ -13,7 +13,7 @@ v3.0 相比旧版：
   - 修复：选择文件夹后统计数量会卡住界面；大量文件时匹配极慢
   - 修复：同名 RAW（不同子文件夹）复制时互相覆盖；取消后仍显示“完成”
   - 修复：统计结果不准确，复制失败不提示；并行线程数按 JPG 盘判断（应按 RAW 盘）
-  - 匹配规则与旧版一致（精确匹配 + 编号模糊匹配）
+  - 匹配规则：去掉中文后英文+数字必须与 RAW 名完全一样（不再模糊匹配，避免 A7S01234↔DSC01234 误匹配）；不复制 XMP
 """
 
 import os
@@ -31,7 +31,7 @@ from tkinter import filedialog, messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_TITLE = "RawPicker 图片筛选工具"
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -136,99 +136,58 @@ def extract_possible_raw_names(filename):
     return list(candidates)
 
 
+_TOKEN_RE = re.compile(r'[A-Za-z0-9_]+')
+
+
+def jpg_match_keys(jpg_filename):
+    """JPG 可用来匹配 RAW 的名字（全部转小写比较）
+
+    中文过滤：去掉中文、空格、横杠、括号等，剩下的每一段“英文+数字”必须和
+    RAW 文件名（不含扩展名）完全一样才算匹配。
+      婚礼DSC0002_修图.jpg → DSC0002    _DSC8746 副本.jpg → _DSC8746
+      IMG_1234-edit.jpg    → IMG_1234   A7S01234修图.jpg  → A7S01234（≠ DSC01234）
+    """
+    stem = os.path.splitext(jpg_filename)[0]
+    keys = {stem.lower()}                       # 完整文件名
+    for t in _TOKEN_RE.findall(stem):
+        if not re.search(r'\d', t):            # 只看带编号的片段（edit、HDR 之类不算）
+            continue
+        keys.add(t.lower())
+        t2 = t.strip('_')                       # “婚礼_DSC0002_修图” 两边的下划线是分隔符
+        if t2:
+            keys.add(t2.lower())
+    return keys
+
+
 def is_filename_match(raw_filename, jpg_filename):
-    """检查RAW文件名是否与JPG文件名匹配（与旧版相同，作为参考实现）"""
-    raw_base = os.path.splitext(raw_filename)[0]
-    jpg_candidates = extract_possible_raw_names(jpg_filename)
-    if raw_base in jpg_candidates:
-        return True
-    for candidate in jpg_candidates:
-        if raw_base in candidate or candidate in raw_base:
-            if len(raw_base) >= 4 and len(candidate) >= 4:
-                raw_numbers = re.findall(r'\d+', raw_base)
-                candidate_numbers = re.findall(r'\d+', candidate)
-                if raw_numbers and candidate_numbers:
-                    rn = raw_numbers[-1]
-                    cn = candidate_numbers[-1]
-                    if len(rn) >= 3 and len(cn) >= 3:
-                        if rn == cn or rn in cn or cn in rn:
-                            return True
-    return False
-
-
-def _substrings(s, min_len=3):
-    out = set()
-    n = len(s)
-    for i in range(n):
-        for j in range(i + min_len, n + 1):
-            out.add(s[i:j])
-    return out
+    """RAW 是否对应这张 JPG（英文+数字部分完全一致）"""
+    return os.path.splitext(raw_filename)[0].lower() in jpg_match_keys(jpg_filename)
 
 
 def match_files(jpg_image_files, raw_files, output_path, is_cancelled=lambda: False):
     """匹配 JPG 与 RAW，返回 (matched: raw_path → 目标路径, matched_jpg_set)
 
-    结果与旧版相同（精确匹配 → 模糊匹配，顺序优先），但用索引代替两两比较，
-    几万个文件也能秒级完成。修复：多个同名 JPG（不同子文件夹）都算已匹配。
+    规则：RAW 文件名（不含扩展名）与 JPG 文件名、或 JPG 去掉中文后的某一段英文+数字
+    完全一样（不区分大小写）。不再做编号的模糊匹配，避免 A7S01234 ↔ DSC01234 这类误匹配。
     """
     raw_name_to_paths = {}
     for raw_file in raw_files:
         raw_name = os.path.splitext(os.path.basename(raw_file))[0]
-        raw_name_to_paths.setdefault(raw_name, []).append(raw_file)
+        raw_name_to_paths.setdefault(raw_name.lower(), []).append(raw_file)
 
-    jpg_names = [os.path.basename(f) for f in jpg_image_files]
-    stem_to_jpgs = {}
-    for idx, name in enumerate(jpg_names):
-        stem_to_jpgs.setdefault(os.path.splitext(name)[0], []).append(idx)
+    key_to_jpgs = {}
+    for idx, f in enumerate(jpg_image_files):
+        for k in jpg_match_keys(os.path.basename(f)):
+            key_to_jpgs.setdefault(k, set()).add(idx)
 
     matched_raw_names = set()
     matched_jpg_idx = set()
-
-    # ---- 第一阶段：精确匹配（文件名主体完全相同）----
     for raw_name in raw_name_to_paths:
         if is_cancelled():
             break
-        if raw_name in stem_to_jpgs:
+        if raw_name in key_to_jpgs:
             matched_raw_names.add(raw_name)
-            matched_jpg_idx.update(stem_to_jpgs[raw_name])
-
-    # ---- 第二阶段：模糊匹配（索引加速，语义同 is_filename_match）----
-    exact_idx = {}            # 候选名 → jpg 序号
-    num_full_idx = {}         # 候选名末尾数字(>=3位) → [(jpg序号, 候选名)]
-    num_sub_idx = {}          # 候选名末尾数字的子串(>=3位) → [(jpg序号, 候选名)]
-    for idx, name in enumerate(jpg_names):
-        for cand in extract_possible_raw_names(name):
-            exact_idx.setdefault(cand, set()).add(idx)
-            if len(cand) < 4:
-                continue
-            nums = re.findall(r'\d+', cand)
-            if not nums or len(nums[-1]) < 3:
-                continue
-            cn = nums[-1]
-            num_full_idx.setdefault(cn, []).append((idx, cand))
-            for sub in _substrings(cn):
-                num_sub_idx.setdefault(sub, []).append((idx, cand))
-
-    for raw_name in raw_name_to_paths:
-        if is_cancelled():
-            break
-        if raw_name in matched_raw_names:
-            continue
-        hits = set(exact_idx.get(raw_name, ()))
-        if len(raw_name) >= 4:
-            nums = re.findall(r'\d+', raw_name)
-            if nums and len(nums[-1]) >= 3:
-                rn = nums[-1]
-                pool = list(num_sub_idx.get(rn, ()))          # rn in cn（含 rn == cn）
-                for sub in _substrings(rn):                    # cn in rn
-                    pool.extend(num_full_idx.get(sub, ()))
-                for idx, cand in pool:
-                    if raw_name in cand or cand in raw_name:
-                        hits.add(idx)
-        hits -= matched_jpg_idx
-        if hits:
-            matched_raw_names.add(raw_name)
-            matched_jpg_idx.add(min(hits))   # 与旧版一致：按顺序第一个未匹配的 JPG
+            matched_jpg_idx.update(key_to_jpgs[raw_name])
 
     # ---- 生成复制计划（同名 RAW 自动改名，避免互相覆盖）----
     matched = {}

@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # RawPicker 图片筛选工具 — Windows 单文件 exe
-APP_VERSION = '3.0.0'
+APP_VERSION = '3.0.1'
 _v = tuple(int(x) for x in APP_VERSION.split('.')) + (0,)
 
 from PyInstaller.utils.win32.versioninfo import (
