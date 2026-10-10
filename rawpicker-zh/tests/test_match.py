@@ -31,6 +31,13 @@ CASES = [
     ("_DSC8746.NEF", "DSC8746.jpg", False),           # 少了下划线，不完全一样
     ("DSC_0001.NEF", "DSC_0001_HDR.jpg", False),      # 下划线连着，整段是 DSC_0001_HDR
     ("DSC01234.NEF", "婚礼.jpg", False),
+    # 去掉中文后完整文件名一致
+    ("N-D810 (4).NEF", "N-D810 (4)副本.jpg", True),
+    ("N-D810 (4).NEF", "N-D810 (4) - 副本.jpg", True),
+    ("N-D810 (4).NEF", "N-D810 (40)副本.jpg", False),
+    ("N-D810 (4).NEF", "N-D810 (5)副本.jpg", False),
+    ("DSC0001.ARW", "DSC0001 副本.jpg", True),
+    ("IMG_5678.CR3", "IMG_5678精修.jpg", True),
 ]
 
 

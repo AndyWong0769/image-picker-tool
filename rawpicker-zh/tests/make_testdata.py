@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""RawPicker self-test data.  usage: make_testdata.py <dir> | check <result.json> <folder|files>"""
+"""RawPicker self-test data.  usage: make_testdata.py <dir> | check <result.json> <folder|files|default>"""
 import json
 import os
 import sys
 
-JPGS = ['DSC_0001.jpg', '婚礼DSC0002_修图.jpg', 'sub/IMG_1234 副本.jpg', 'DSC0005.jpg', 'nomatch_9999.jpg']
+JPGS = ['DSC_0001.jpg', '婚礼DSC0002_修图.jpg', 'sub/IMG_1234 副本.jpg', 'DSC0005.jpg', 'nomatch_9999.jpg',
+        'N-D810 (4)副本.jpg']
 RAWS = ['DSC_0001.NEF', 'DSC0002.CR2', 'deep/IMG_1234.ARW', 'a/DSC0005.NEF', 'b/DSC0005.NEF',
-        'DSC_0001.xmp', 'other_7777.NEF']
+        'DSC_0001.xmp', 'other_7777.NEF', 'N-D810 (4).NEF', 'N-D810 (40).NEF']
 
 EXPECTED = {
     # folder mode: every JPG except nomatch; both DSC0005.NEF copies kept (renamed, not overwritten)
-    'folder': {'out_files': sorted(['DSC_0001.NEF', 'DSC0002.CR2', 'IMG_1234.ARW', 'DSC0005.NEF', 'DSC0005_1.NEF']),
-               'unmatched': ['nomatch_9999.jpg'], 'copied': 5},
+    'folder': {'out_files': sorted(['DSC_0001.NEF', 'DSC0002.CR2', 'IMG_1234.ARW', 'DSC0005.NEF', 'DSC0005_1.NEF',
+                                    'N-D810 (4).NEF']),
+               'unmatched': ['nomatch_9999.jpg'], 'copied': 6},
+    # output left empty: goes to <jpg>/raw (already exists, holds an old DSC0002.CR2 → overwritten)
+    'default': {'out_files': sorted(['DSC_0001.NEF', 'DSC0002.CR2', 'IMG_1234.ARW', 'DSC0005.NEF', 'DSC0005_1.NEF',
+                                     'N-D810 (4).NEF']),
+                'unmatched': ['nomatch_9999.jpg'], 'copied': 6, 'overwritten': True},
     # files mode: only the first two JPGs (sorted) are selected: DSC0005.jpg, DSC_0001.jpg
     'files': {'out_files': sorted(['DSC_0001.NEF', 'DSC0005.NEF', 'DSC0005_1.NEF']),
               'unmatched': [], 'copied': 3},
@@ -39,6 +45,8 @@ def check(result_file, mode):
     assert r['out_files'] == exp['out_files'], (r['out_files'], exp['out_files'])
     assert r['unmatched'] == exp['unmatched'], r['unmatched']
     assert r['copied'] == exp['copied'] and not r['failed'], r
+    if 'overwritten' in exp:
+        assert r['overwritten'] is exp['overwritten'], r
     print(f"SELFTEST PASSED ({mode})")
 
 

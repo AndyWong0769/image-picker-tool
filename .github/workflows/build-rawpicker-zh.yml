@@ -34,7 +34,7 @@ jobs:
         run: pyinstaller --noconfirm --clean RawPicker_win.spec && ls -la dist
       - name: Self-test (folder mode + picked-images mode)
         run: |
-          for MODE in folder files; do
+          for MODE in folder files default; do
             T="$RUNNER_TEMP/rp_$MODE"; rm -rf "$T"
             python tests/make_testdata.py "$T"
             RP_SELFTEST_MODE=$MODE RP_SELFTEST_DIR="$(cygpath -w "$T")" ./dist/RawPicker.exe &
@@ -94,7 +94,7 @@ jobs:
       - name: Self-test (Finder-style launch, Chinese system language, both modes)
         run: |
           defaults write -g AppleLanguages -array zh-Hans en
-          for MODE in folder files; do
+          for MODE in folder files default; do
             T=$(mktemp -d)
             python3 tests/make_testdata.py "$T"
             open --env RP_SELFTEST_MODE=$MODE --env RP_SELFTEST_DIR="$T" dist/RawPicker.app
