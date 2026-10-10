@@ -55,6 +55,8 @@ jobs:
       - name: Repro - launch like Finder on a Chinese-language system
         continue-on-error: true
         run: |
+          mkdir -p /tmp/pubcrash
+          exec > >(tee /tmp/pubcrash/repro.txt) 2>&1
           defaults write -g AppleLanguages -array zh-Hans en
           defaults write -g AppleLocale zh_CN
           T=$(mktemp -d)
@@ -72,7 +74,8 @@ jobs:
           echo "=== crash reports"
           ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null | grep -i jpgfind || echo "(none)"
           for f in ~/Library/Logs/DiagnosticReports/JpgFindRawCN*; do [ -f "$f" ] && head -c 3000 "$f" | grep -E "reason|Exception|Termination|abort" ; done
-          mkdir -p /tmp/pubcrash && cp ~/Library/Logs/DiagnosticReports/JpgFindRawCN* /tmp/pubcrash/ 2>/dev/null || true
+          cp ~/Library/Logs/DiagnosticReports/JpgFindRawCN* /tmp/pubcrash/ 2>/dev/null || true
+          ls -la ~/Library/Logs/DiagnosticReports/ | tail -5
           defaults delete -g AppleLanguages || true
           defaults delete -g AppleLocale || true
 
