@@ -977,12 +977,12 @@ class FindRawApp:
                 legacy_dir = (os.path.dirname(sys.executable) if getattr(sys, 'frozen', False)
                               else os.path.dirname(os.path.abspath(__file__)))
                 legacy = os.path.join(legacy_dir, '.jpg_find_raw.json')
-                if False and os.path.exists(legacy):   # 中文版不迁移旧路径
+                if os.path.exists(legacy):
                     path = legacy
             if os.path.exists(path):
                 with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                # 中文版：不恢复上次的文件夹路径，每次启动都是空的（只恢复设置项）
+                # Folder paths are intentionally NOT restored: the app always starts empty.
                 s = data.get('settings', {})
                 for k in self.settings:
                     if k in s:
@@ -992,7 +992,7 @@ class FindRawApp:
 
     def _save_config(self, show_error=True):
         try:
-            data = {'settings': self.settings}   # 中文版：不保存文件夹路径
+            data = {'settings': self.settings}   # folder paths are not saved
             tmp = _CONFIG_PATH + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1521,7 +1521,7 @@ class FindRawApp:
 
 def _disable_tk_console_on_macos():
     """Tk opens a hidden console when stdin looks like /dev/null (Finder launch).
-    Replace stdin with a pipe so Tk skips it (avoids a menubar crash on macOS 11)."""
+    Replace stdin with a pipe so Tk skips it (avoids a menubar crash seen on macOS 11)."""
     if not _IS_MACOS:
         return
     import stat

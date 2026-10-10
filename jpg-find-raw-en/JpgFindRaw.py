@@ -33,7 +33,7 @@ from tkinter import ttk, filedialog, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw"
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.1.3"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -892,14 +892,12 @@ class FindRawApp:
         if d and d not in self.jpg_folders:
             self.jpg_folders.append(d)
             self._refresh_jpg_list()
-            self._save_config(show_error=False)
 
     def _add_raw_folder(self):
         d = self._ask_folder("Add RAW Folder")
         if d and d not in self.raw_folders:
             self.raw_folders.append(d)
             self._refresh_raw_list()
-            self._save_config(show_error=False)
 
     def _browse_out(self):
         d = self._ask_folder("Select Output Directory")
@@ -974,9 +972,7 @@ class FindRawApp:
             if os.path.exists(path):
                 with open(path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                # Only load folders that still exist (external drive may be unplugged)
-                self.jpg_folders = [p for p in data.get('jpg_folders', []) if os.path.isdir(p)]
-                self.raw_folders = [p for p in data.get('raw_folders', []) if os.path.isdir(p)]
+                # Folder paths are intentionally NOT restored: the app always starts empty.
                 s = data.get('settings', {})
                 for k in self.settings:
                     if k in s:
@@ -986,11 +982,7 @@ class FindRawApp:
 
     def _save_config(self, show_error=True):
         try:
-            data = {
-                'jpg_folders': self.jpg_folders,
-                'raw_folders': self.raw_folders,
-                'settings': self.settings,
-            }
+            data = {'settings': self.settings}   # folder paths are not saved
             tmp = _CONFIG_PATH + '.tmp'
             with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -1499,7 +1491,7 @@ class FindRawApp:
                 count, failed, _ = self._last_export
                 matched = {r['jpg_name']: (r['raw_name'], r['method']) for r in self.results}
                 out_files = sorted(os.listdir(os.path.join(base, 'out')))
-                return finish(True, {'matched': matched, 'copied': count,
+                return finish(True, {'tk_console': bool(self.root.tk.call('info', 'commands', 'console')), 'matched': matched, 'copied': count,
                                      'failed': failed, 'out_files': out_files})
             self.root.after(200, tick)
 
@@ -1511,7 +1503,29 @@ class FindRawApp:
 # Entry point
 # ============================================================
 
+def _disable_tk_console_on_macos():
+    """Tk opens a hidden console when stdin looks like /dev/null (Finder launch).
+    Replace stdin with a pipe so Tk skips it (avoids a menubar crash seen on macOS 11)."""
+    if not _IS_MACOS:
+        return
+    import stat
+    try:
+        st = os.fstat(0)
+        nullish = (not os.isatty(0)) and stat.S_ISCHR(st.st_mode)
+    except OSError:
+        nullish = True
+    if nullish:
+        try:
+            r, w = os.pipe()
+            os.dup2(r, 0)
+            os.close(r)
+            globals()['_STDIN_PIPE_W'] = w   # keep the write end open
+        except OSError:
+            pass
+
+
 def main():
+    _disable_tk_console_on_macos()
     if _IS_WINDOWS:
         # Must be called before the first window is created, otherwise Windows
         # bitmap-stretches the window on high-DPI screens (blurry text).

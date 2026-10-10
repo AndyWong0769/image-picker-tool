@@ -19,25 +19,7 @@ R('APP_NAME = "JpgFindRaw"', 'APP_NAME = "JpgFindRaw-ZH"          # config folde
 R('''    _UI_FAMILY = "Helvetica Neue"''', '''    _UI_FAMILY = "PingFang SC"''')
 R('''    _UI_FAMILY = "Segoe UI"''', '''    _UI_FAMILY = "Microsoft YaHei UI"''')
 
-# ---------- do NOT remember folder paths ----------
-R('''                # Only load folders that still exist (external drive may be unplugged)
-                self.jpg_folders = [p for p in data.get('jpg_folders', []) if os.path.isdir(p)]
-                self.raw_folders = [p for p in data.get('raw_folders', []) if os.path.isdir(p)]
-''', '''                # 中文版：不恢复上次的文件夹路径，每次启动都是空的（只恢复设置项）
-''')
-R('''            data = {
-                'jpg_folders': self.jpg_folders,
-                'raw_folders': self.raw_folders,
-                'settings': self.settings,
-            }''', '''            data = {'settings': self.settings}   # 中文版：不保存文件夹路径''')
-R('''            self._refresh_jpg_list()
-            self._save_config(show_error=False)''', '''            self._refresh_jpg_list()''')
-R('''            self._refresh_raw_list()
-            self._save_config(show_error=False)''', '''            self._refresh_raw_list()''')
-# legacy (v2.0 Windows) config had paths -> don't migrate for zh
-R('''                if os.path.exists(legacy):
-                    path = legacy''', '''                if False and os.path.exists(legacy):   # 中文版不迁移旧路径
-                    path = legacy''')
+# (folder paths are not remembered — already handled in the English source)
 
 # ---------- UI text ----------
 T = [

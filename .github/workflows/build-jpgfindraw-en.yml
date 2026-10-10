@@ -70,6 +70,16 @@ jobs:
           kill $PID 2>/dev/null || true
           python3 tests/make_testdata.py check "$T/result.json"
 
+      - name: Launch like Finder (must not crash, no Tk console)
+        run: |
+          T=$(mktemp -d)
+          python3 tests/make_testdata.py "$T"
+          open --env JFR_SELFTEST_DIR="$T" dist/JpgFindRaw.app
+          for i in $(seq 1 90); do [ -f "$T/result.json" ] && break; sleep 1; done
+          pkill -f "JpgFindRaw.app/Contents/MacOS/JpgFindRaw" || true
+          python3 tests/make_testdata.py check "$T/result.json"
+          python3 -c "import json,sys; r=json.load(open('$T/result.json')); print('tk_console =', r.get('tk_console')); sys.exit(1 if r.get('tk_console') is not False else 0)"
+
       - name: Create DMG
         run: |
           rm -rf dmgroot && mkdir dmgroot

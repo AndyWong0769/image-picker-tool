@@ -2,7 +2,7 @@
 # PyInstaller spec for JpgFindRaw (English, Windows, single-file .exe)
 #   pyinstaller --noconfirm --clean JpgFindRaw_win.spec
 
-APP_VERSION = '2.1.2'
+APP_VERSION = '2.1.3'
 _v = tuple(int(x) for x in APP_VERSION.split('.')) + (0,)
 
 from PyInstaller.utils.win32.versioninfo import (
