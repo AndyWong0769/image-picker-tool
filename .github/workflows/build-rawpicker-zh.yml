@@ -27,6 +27,8 @@ jobs:
       - name: Install PyInstaller
         run: pip install "pyinstaller>=6.11,<7"
       - name: Matching rule tests
+        env:
+          PYTHONIOENCODING: utf-8
         run: python tests/test_match.py
       - name: Build EXE
         run: pyinstaller --noconfirm --clean RawPicker_win.spec && ls -la dist
@@ -83,7 +85,7 @@ jobs:
           /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m venv /tmp/venv
           /tmp/venv/bin/pip install "pyinstaller>=6.11,<7"
       - name: Matching rule tests
-        run: python3 tests/test_match.py
+        run: /tmp/venv/bin/python tests/test_match.py
       - name: Build .app
         run: |
           /tmp/venv/bin/pyinstaller --noconfirm --clean RawPicker_mac.spec

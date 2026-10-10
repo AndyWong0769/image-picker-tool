@@ -4,6 +4,11 @@ usage: python tests/test_match.py   (run from rawpicker-zh/)"""
 import os
 import sys
 
+try:
+    sys.stdout.reconfigure(encoding='utf-8')   # Windows 控制台默认不是 UTF-8
+except Exception:
+    pass
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import RawPicker as rp  # noqa: E402
 
