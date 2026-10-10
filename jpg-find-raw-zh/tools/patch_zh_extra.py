@@ -25,7 +25,19 @@ R('''    all_patterns = re.findall(r'[a-zA-Z0-9_]{2,}', name_without_ext)
 '''    if filter_chinese:
         # 过滤中文：提取字母数字下划线片段，忽略纯中文
         for p in re.findall(r'[a-zA-Z0-9_]{2,}', name_without_ext):
-            candidates.add(p.lower())''')
+            candidates.add(p.lower())
+        # 去掉中文后的完整文件名：N-D810 (4)副本 → N-D810 (4)；DSC0001 - 副本 → DSC0001
+        no_cjk = _CJK_RE.sub('', name_without_ext)
+        if no_cjk != name_without_ext:
+            for c in (no_cjk.strip(_TRIM_CHARS), re.sub(r'\\s+', ' ', no_cjk).strip(_TRIM_CHARS)):
+                if c:
+                    candidates.add(c.lower())''')
+R('''def extract_possible_raw_names(''', '''# 中文汉字 + 中文标点 / 全角字符
+_CJK_RE = re.compile('[\\u3000-\\u303f\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\uff00-\\uffef]')
+_TRIM_CHARS = ' \\t-_.~'
+
+
+def extract_possible_raw_names(''')
 R('''    jpg_suffix = parse_filters(settings.get('jpg_suffix_filters', '')) if settings else []
 ''', '''    jpg_suffix = parse_filters(settings.get('jpg_suffix_filters', '')) if settings else []
     filter_chinese = settings.get('filter_chinese', True) if settings else True
@@ -80,7 +92,7 @@ for w in W:
 # (Tk console suppression, version and self-test console report now live in the English source)
 
 # 中文版单独的版本号（仅中文文字修正时使用）
-R('APP_VERSION = "2.2.0"', 'APP_VERSION = "2.2.1"')
+R('APP_VERSION = "2.2.0"', 'APP_VERSION = "2.2.2"')
 
 open(p, 'w', encoding='utf-8').write(s)
 print("ok")
