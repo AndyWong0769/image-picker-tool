@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw-ZH"          # config folder name
 APP_DISPLAY = "JPG 查找 RAW"
-APP_VERSION = "2.2.2"
+APP_VERSION = "2.2.3"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -1421,6 +1421,8 @@ class FindRawApp:
                                 "（系统设置 → 隐私与安全性 → 文件与文件夹）。")
 
     def _on_match_done(self, results, status):
+        # unmatched JPGs first, so they are visible without scrolling through hundreds of rows
+        results = [r for r in results if not r['raw_path']] + [r for r in results if r['raw_path']]
         self.results = results
         matched = sum(1 for r in results if r['raw_path'])
         unmatched = len(results) - matched

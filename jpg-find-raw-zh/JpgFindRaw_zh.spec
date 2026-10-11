@@ -2,7 +2,7 @@
 # PyInstaller spec — JPG查找RAW 中文版 (macOS, universal2, onedir .app)
 #   pyinstaller --noconfirm --clean JpgFindRaw_zh.spec
 
-APP_VERSION = '2.2.2'
+APP_VERSION = '2.2.3'
 
 a = Analysis(
     ['JpgFindRaw_zh.py'],

@@ -33,7 +33,7 @@ from tkinter import ttk, filedialog, messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_NAME = "JpgFindRaw"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -1394,6 +1394,8 @@ class FindRawApp:
                                 "(System Settings → Privacy & Security → Files and Folders).")
 
     def _on_match_done(self, results, status):
+        # unmatched JPGs first, so they are visible without scrolling through hundreds of rows
+        results = [r for r in results if not r['raw_path']] + [r for r in results if r['raw_path']]
         self.results = results
         matched = sum(1 for r in results if r['raw_path'])
         unmatched = len(results) - matched

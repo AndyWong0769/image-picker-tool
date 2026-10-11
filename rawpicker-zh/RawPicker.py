@@ -10,6 +10,7 @@ v3.1：
   - 输出文件夹不填：默认导出到 JPG 目录下的 raw 文件夹（没有就新建，有就直接放进去）
   - 输出文件夹里已有同名文件：弹窗选择 覆盖 / 跳过 / 取消
   - 不再生成 unmatched_files.txt（未匹配的直接在表格里标红）
+  - 匹配结果里未匹配的排在最上面
   - 中文过滤修复：N-D810 (4)副本.jpg 现在能匹配 N-D810 (4).NEF
 
 v3.0 相比旧版：
@@ -38,7 +39,7 @@ from tkinter import filedialog, messagebox, ttk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 APP_TITLE = "RawPicker 图片筛选工具"
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.1.1"
 
 _IS_MACOS = sys.platform == 'darwin'
 _IS_WINDOWS = sys.platform.startswith('win')
@@ -918,6 +919,8 @@ class RawPickerApp:
         self.export_btn.set_enabled(False)
 
     def _show_rows(self, rows):
+        # 未匹配的排在最上面，图多时不用翻半天
+        rows = [r for r in rows if not r['raws']] + [r for r in rows if r['raws']]
         self.rows = rows
         self.item_row, self.checked = {}, set()
         for r in rows:
@@ -936,7 +939,7 @@ class RawPickerApp:
                                        cursor="hand2" if unmatched else "")
         self.stats_label.configure(text=f"{len(rows)} JPG  |  {matched} 匹配  |  {unmatched} 未匹配")
         self.status_label.configure(
-            text="文件名匹配完成" + ("　（点下方红色“未匹配”可逐个定位）" if unmatched else ""))
+            text="文件名匹配完成" + ("　（未匹配的已排在最上面）" if unmatched else ""))
         self._update_selected()
 
     def _update_selected(self):
